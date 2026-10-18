@@ -195,5 +195,5 @@ resource "aws_instance" "frontend" {
   })
   user_data_replace_on_change = true
 
-  tags = { Name = "${var.proyecto}-frontend", rol = "...meini" }
+  tags = { Name = "${var.proyecto}-frontend", rol = "frontend" }
 }

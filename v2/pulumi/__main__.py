@@ -68,8 +68,7 @@ ec2_instance = aws.ec2.Instance(
     vpc_security_group_ids=[sec_group.id],
     tags={
         "Name": instance_name,
-        "ManagedBy": "Pulumi",
-        "Estado": "PruebaModificacion"
+        "ManagedBy": "Pulumi"
     }
 )
 

@@ -1,0 +1,4 @@
+bucket         = "MY_BUCKET_NAME"
+region         = "MY_REGION"
+dynamodb_table = "MY_DYNAMODB_TABLE_NAME"
+role_arn       = "arn:aws:iam::MY_ACCOUNT_ID:role/RolTerraformColaborador"
