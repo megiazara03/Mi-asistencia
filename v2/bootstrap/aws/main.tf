@@ -20,9 +20,17 @@ variable "region" {
 }
 
 variable "proyecto" {
-  description = "Prefijo identificador para el bucket y la tabla"
+  description = "Prefijo identificador para los recursos"
   type        = string
   default     = "asistencia"
+}
+
+# Lista de cuentas autorizadas para asumir el rol (puedes agregar tantas como quieras)
+variable "cuentas_colaboradores" {
+  description = "Lista de Account IDs de AWS de los compañeros que podrán colaborar"
+  type        = list(string)
+  default     = [
+]
 }
 
 provider "aws" {
@@ -36,7 +44,10 @@ provider "aws" {
   }
 }
 
-# Generador de sufijo aleatorio para asegurar unicidad global en S3
+# Obtiene la información de TU propia cuenta actual
+data "aws_caller_identity" "current" {}
+
+# Generador de sufijo aleatorio para unicidad en S3
 resource "random_string" "sufijo" {
   length  = 8
   special = false
@@ -53,7 +64,7 @@ resource "aws_s3_bucket" "tfstate" {
   }
 }
 
-# Versionado para recuperar estados previos si se corrompe o borra
+# Versionado en S3
 resource "aws_s3_bucket_versioning" "tfstate" {
   bucket = aws_s3_bucket.tfstate.id
 
@@ -62,7 +73,7 @@ resource "aws_s3_bucket_versioning" "tfstate" {
   }
 }
 
-# Cifrado en reposo por defecto (AES256)
+# Cifrado en reposo (AES256)
 resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
   bucket = aws_s3_bucket.tfstate.id
 
@@ -73,7 +84,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
   }
 }
 
-# Bloqueo total de acceso público
+# Bloqueo de acceso público en S3
 resource "aws_s3_bucket_public_access_block" "tfstate" {
   bucket = aws_s3_bucket.tfstate.id
 
@@ -83,7 +94,7 @@ resource "aws_s3_bucket_public_access_block" "tfstate" {
   restrict_public_buckets = true
 }
 
-# 2. Tabla DynamoDB para el State Locking (evita ejecuciones simultáneas)
+# 2. Tabla DynamoDB para el State Locking
 resource "aws_dynamodb_table" "tfstate_locks" {
   name         = "${var.proyecto}-tfstate-locks"
   billing_mode = "PAY_PER_REQUEST"
@@ -95,7 +106,35 @@ resource "aws_dynamodb_table" "tfstate_locks" {
   }
 }
 
-# Valores a copiar en v3/aws/backend.tf
+# 3. ROL IAM PARA COLABORADORES MULTI-CUENTA
+resource "aws_iam_role" "colaborador" {
+  name = "RolTerraformColaborador"
+
+  # Trust relationships (Política de confianza)
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = concat(
+            [data.aws_caller_identity.current.arn], # Tu propia cuenta
+            [for id in var.cuentas_colaboradores : "arn:aws:iam::${id}:root"] # Cuentas de tus compañeros
+          )
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+# 4. Asignar AdministratorAccess al Rol
+resource "aws_iam_role_policy_attachment" "admin_access" {
+  role       = aws_iam_role.colaborador.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+# 5. Salidas útiles para copiar en el backend.tf
 output "s3_bucket_name" {
   description = "Nombre del bucket S3 para el backend remoto"
   value       = aws_s3_bucket.tfstate.bucket
@@ -104,6 +143,11 @@ output "s3_bucket_name" {
 output "dynamodb_table_name" {
   description = "Nombre de la tabla DynamoDB para locking"
   value       = aws_dynamodb_table.tfstate_locks.name
+}
+
+output "role_arn" {
+  description = "ARN del rol que deben asumir los colaboradores"
+  value       = aws_iam_role.colaborador.arn
 }
 
 output "region" {

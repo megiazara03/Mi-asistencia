@@ -26,8 +26,8 @@ provider "aws" {
   region = var.region
 
   assume_role {
-    role_arn     = "arn:aws:iam::168692730615:role/RolTerraformColaborador"
-    session_name = "SesionColaboradorTerraform"
+    role_arn     = "arn:aws:iam::838115390516:role/RolTerraformColaborador"
+    session_name = "SesionColaborador"
   }
 
   default_tags {
