@@ -1,0 +1,7 @@
+---
+- name: Probar conectividad con los servidores
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ping a todos los hosts
+      ansible.builtin.ping:
