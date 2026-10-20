@@ -12,11 +12,12 @@
         update_cache: yes
 
     # 2. Instalar herramientas basicas utiles
-    - name: Instalar herramientas esenciales (git, htop, wget, tar)
+    - name: Instalar herramientas esenciales (git, htop, curl, wget, tar)
       ansible.builtin.dnf:
         name:
           - git
           - htop
+          - curl
           - wget
           - tar
         state: present
