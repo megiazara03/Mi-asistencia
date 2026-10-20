@@ -1,6 +1,6 @@
 ---
 - name: Aprovisionar servidor Backend (Node.js + MySQL sin Docker)
-  hosts: backend
+  hosts: servidores_aws
   become: true
   vars:
     node_version: "20.x"
