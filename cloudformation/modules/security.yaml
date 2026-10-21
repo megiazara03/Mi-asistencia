@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Modulo de Red y Seguridad para Sistema de Asistencia (Security Groups)'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC donde se crearan los grupos de seguridad (por defecto o personalizada)
+  MiIp:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: Direccion IP autorizada para acceso SSH (ej. 181.115.1.2/32 o 0.0.0.0/0)
+  Proyecto:
+    Type: String
+    Default: 'asistencia'
+    Description: Prefijo para los nombres de los recursos
+
+Resources:
+  FrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Frontend: HTTP publico (80) y SSH (22)'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: 'HTTP publico'
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MiIp
+          Description: 'SSH para administracion'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'Trafico saliente libre'
+      Tags:
+        - Key: Name
+          Value: !Sub '${Proyecto}-sg-frontend'
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Backend: API (8000) y SSH (22). MySQL no expuesto publicamente.'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MiIp
+          Description: 'SSH para administracion'
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+          Description: 'API publica o acceso directo'
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref FrontendSecurityGroup
+          Description: 'Trafico API desde el Frontend Nginx'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'Trafico saliente libre'
+      Tags:
+        - Key: Name
+          Value: !Sub '${Proyecto}-sg-backend'
+
+Outputs:
+  FrontendSecurityGroupId:
+    Description: ID del Security Group del Frontend
+    Value: !Ref FrontendSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendSecurityGroupId'
+
+  BackendSecurityGroupId:
+    Description: ID del Security Group del Backend
+    Value: !Ref BackendSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-BackendSecurityGroupId'

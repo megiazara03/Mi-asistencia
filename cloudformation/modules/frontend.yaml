@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Modulo de Instancia EC2 Frontend (React/Vite + Nginx)'
+
+Parameters:
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subred publica donde se desplegara la instancia
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: ID del Security Group para el frontend
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI Ubuntu Server 24.04 LTS
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nombre del par de llaves SSH
+  InstanceType:
+    Type: String
+    Default: 't3.micro'
+    AllowedValues:
+      - 't2.micro'
+      - 't3.micro'
+      - 't3.small'
+  Proyecto:
+    Type: String
+    Default: 'asistencia'
+  RepoUrl:
+    Type: String
+    Default: 'https://github.com/escobarnina/Mi-asistencia.git'
+  RepoRama:
+    Type: String
+    Default: 'main'
+  BackendPrivateIp:
+    Type: String
+    Description: IP privada del backend para el proxy reverso Nginx
+
+Resources:
+  FrontendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 10
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > /var/log/despliegue.log 2>&1
+          export DEBIAN_FRONTEND=noninteractive
+          export HOME=/root
+          APT="apt-get -y -o DPkg::Lock::Timeout=300"
+          BACKEND="${BackendPrivateIp}"
+
+          # 1. Swap de 2 GB: Vite build requiere suficiente memoria
+          timedatectl set-timezone America/La_Paz
+          if [ ! -f /swapfile ]; then
+            fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+          fi
+
+          # 2. Paquetes: Nginx, Git, Node.js 20
+          $APT update
+          $APT install nginx git curl ca-certificates
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          $APT install nodejs
+
+          # 3. Codigo y build de produccion
+          rm -rf /opt/asistencia
+          git clone --branch ${RepoRama} --depth 1 ${RepoUrl} /opt/asistencia
+          cd /opt/asistencia/frontend
+          npm ci
+          npm run build
+          mkdir -p /var/www/asistencia
+          rm -rf /var/www/asistencia/*
+          cp -r dist/* /var/www/asistencia/
+
+          # 4. Nginx: sirve SPA y proxy /api/ hacia el backend
+          cat > /etc/nginx/sites-available/asistencia <<EOF
+          server {
+              listen 80 default_server;
+              server_name _;
+
+              root /var/www/asistencia;
+              index index.html;
+              client_max_body_size 10m;
+
+              location /api/ {
+                  proxy_pass http://$BACKEND:8000;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+              }
+
+              location / {
+                  try_files \$uri \$uri/ /index.html;
+              }
+          }
+          EOF
+          rm -f /etc/nginx/sites-enabled/default
+          ln -sf /etc/nginx/sites-available/asistencia /etc/nginx/sites-enabled/asistencia
+          nginx -t
+          systemctl enable nginx
+          systemctl restart nginx
+
+          # 5. Script utilitario para actualizar frontend
+          cat > /usr/local/bin/actualizar-frontend <<'EOF'
+          #!/bin/bash
+          set -e
+          export HOME=/root
+          cd /opt/asistencia && git pull
+          cd frontend && npm ci && npm run build
+          rm -rf /var/www/asistencia/* && cp -r dist/* /var/www/asistencia/
+          systemctl reload nginx
+          echo "Frontend actualizado"
+          EOF
+          chmod +x /usr/local/bin/actualizar-frontend
+          echo "=== FRONTEND LISTO ==="
+      Tags:
+        - Key: Name
+          Value: !Sub '${Proyecto}-frontend'
+        - Key: rol
+          Value: frontend
+
+Outputs:
+  FrontendInstanceId:
+    Description: ID de la instancia Frontend
+    Value: !Ref FrontendInstance
+  FrontendPublicIp:
+    Description: IP publica de la aplicacion (acceso web)
+    Value: !GetAtt FrontendInstance.PublicIp
+  AppUrl:
+    Description: URL publica del Sistema de Asistencia
+    Value: !Sub 'http://${FrontendInstance.PublicIp}'

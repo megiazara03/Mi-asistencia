@@ -1,0 +1,367 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Plantilla Standalone (Todo-en-uno) del Sistema de Asistencia (2 EC2s: Backend + Frontend)'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC en la que se desplegara la infraestructura (selecciona tu VPC default o personalizada)
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subred publica donde se crearan las instancias
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Par de llaves SSH existente en AWS EC2
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI Ubuntu Server 24.04 LTS (x86_64) en la region elegida
+  InstanceType:
+    Type: String
+    Default: 't3.micro'
+    AllowedValues:
+      - 't2.micro'
+      - 't3.micro'
+      - 't3.small'
+    Description: Tipo de instancia EC2 (t3.micro / t2.micro entran en Free Tier)
+  MiIp:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: Tu direccion IP para restringir SSH en formato CIDR (ej. 190.10.20.30/32 o 0.0.0.0/0)
+  Proyecto:
+    Type: String
+    Default: 'asistencia'
+    Description: Prefijo para nombrar los recursos
+  RepoUrl:
+    Type: String
+    Default: 'https://github.com/escobarnina/Mi-asistencia.git'
+    Description: Repositorio Git del proyecto
+  RepoRama:
+    Type: String
+    Default: 'main'
+    Description: Rama a clonar
+  DbPassword:
+    Type: String
+    NoEcho: true
+    Default: 'AsistenciaSecretDb2026!'
+    Description: Contrasena para la base de datos MySQL del backend
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Default: 'SuperSecretKeyForJWTAuthTokenAsistenciaApp2026!'
+    Description: Secreto JWT para sesiones y autenticacion
+  AdminEmail:
+    Type: String
+    Default: 'admin@asistencia.local'
+    Description: Correo del administrador inicial
+  AdminPassword:
+    Type: String
+    NoEcho: true
+    Default: 'Admin1234*'
+    Description: Contrasena del usuario administrador
+  CargarSemilla:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Cargar datos de prueba de docentes, materias y estudiantes
+
+Resources:
+  # -------------------------------------------------------------
+  # 1. Grupos de Seguridad
+  # -------------------------------------------------------------
+  FrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Frontend: HTTP publico (80) y SSH (22)'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: 'HTTP publico'
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MiIp
+          Description: 'SSH para administracion'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'Trafico saliente libre'
+      Tags:
+        - Key: Name
+          Value: !Sub '${Proyecto}-sg-frontend'
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Backend: API (8000) y SSH (22). MySQL no expuesto publicamente.'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MiIp
+          Description: 'SSH para administracion'
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+          Description: 'API publica o acceso directo'
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref FrontendSecurityGroup
+          Description: 'Trafico API desde el Frontend Nginx'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'Trafico saliente libre'
+      Tags:
+        - Key: Name
+          Value: !Sub '${Proyecto}-sg-backend'
+
+  # -------------------------------------------------------------
+  # 2. Instancia Backend (Node.js 20 + Express + MySQL 8)
+  # -------------------------------------------------------------
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref BackendSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -euxo pipefail
+            exec > /var/log/despliegue.log 2>&1
+            export DEBIAN_FRONTEND=noninteractive
+            export HOME=/root
+            APT="apt-get -y -o DPkg::Lock::Timeout=300"
+
+            # 1. Zona horaria y Swap
+            timedatectl set-timezone America/La_Paz
+            if [ ! -f /swapfile ]; then
+              fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+              echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            fi
+
+            # 2. Paquetes: Node.js 20, MySQL 8, git
+            $APT update
+            $APT install git curl ca-certificates mysql-server
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+            $APT install nodejs
+
+            # 3. MySQL Server configuracion
+            cat > /etc/mysql/mysql.conf.d/zz-asistencia.cnf <<'EOF'
+            [mysqld]
+            character-set-server = utf8mb4
+            collation-server     = utf8mb4_unicode_ci
+            bind-address         = 127.0.0.1
+            EOF
+            systemctl restart mysql
+
+            mysql <<'EOF'
+            CREATE DATABASE IF NOT EXISTS asistencia CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+            CREATE USER IF NOT EXISTS 'asistencia'@'localhost' IDENTIFIED BY '${_DbPassword}';
+            CREATE USER IF NOT EXISTS 'asistencia'@'127.0.0.1' IDENTIFIED BY '${_DbPassword}';
+            GRANT ALL PRIVILEGES ON asistencia.* TO 'asistencia'@'localhost';
+            GRANT ALL PRIVILEGES ON asistencia.* TO 'asistencia'@'127.0.0.1';
+            FLUSH PRIVILEGES;
+            EOF
+
+            # 4. Usuario de aplicacion y codigo fuente
+            id asistencia || useradd --system --create-home --shell /bin/bash asistencia
+            rm -rf /opt/asistencia
+            git clone --branch ${RepoRama} --depth 1 ${RepoUrl} /opt/asistencia
+
+            cat > /opt/asistencia/.env <<'EOF'
+            NODE_ENV=production
+            PORT=8000
+            DB_HOST=127.0.0.1
+            DB_PORT=3306
+            MYSQL_DATABASE=asistencia
+            MYSQL_USER=asistencia
+            MYSQL_PASSWORD=${_DbPassword}
+            JWT_SECRET=${_JwtSecret}
+            JWT_MINUTOS=480
+            ADMIN_EMAIL=${AdminEmail}
+            ADMIN_PASSWORD='${AdminPassword}'
+            TZ=America/La_Paz
+            CORS_ORIGINS=http://localhost:5173
+            EOF
+            chmod 600 /opt/asistencia/.env
+            chown -R asistencia:asistencia /opt/asistencia
+
+            # 5. Dependencias y migraciones
+            sudo -u asistencia -H bash -c 'cd /opt/asistencia/backend && npm ci && NODE_ENV=production npm run migrate'
+            if [ "${CargarSemilla}" = "true" ]; then
+              sudo -u asistencia -H bash -c 'cd /opt/asistencia/backend && NODE_ENV=production npm run seed'
+            fi
+
+            # 6. Servicio systemd
+            cat > /etc/systemd/system/asistencia-backend.service <<'EOF'
+            [Unit]
+            Description=Sistema de Asistencia - Backend (Node/Express)
+            After=network.target mysql.service
+            Requires=mysql.service
+
+            [Service]
+            User=asistencia
+            WorkingDirectory=/opt/asistencia/backend
+            Environment=NODE_ENV=production
+            ExecStart=/usr/bin/node src/server.js
+            Restart=always
+            RestartSec=5
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+            systemctl daemon-reload
+            systemctl enable --now asistencia-backend
+
+            # 7. Script utilitario para actualizar backend
+            cat > /usr/local/bin/actualizar-backend <<'EOF'
+            #!/bin/bash
+            set -e
+            sudo -u asistencia -H bash -c 'cd /opt/asistencia && git pull && cd backend && npm ci && NODE_ENV=production npm run migrate'
+            systemctl restart asistencia-backend
+            echo "Backend actualizado"
+            EOF
+            chmod +x /usr/local/bin/actualizar-backend
+            echo "=== BACKEND LISTO ==="
+          - _DbPassword: !Ref DbPassword
+            _JwtSecret: !Ref JwtSecret
+      Tags:
+        - Key: Name
+          Value: !Sub '${Proyecto}-backend'
+        - Key: rol
+          Value: backend
+
+  # -------------------------------------------------------------
+  # 3. Instancia Frontend (React/Vite + Nginx)
+  # -------------------------------------------------------------
+  FrontendInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: BackendInstance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref FrontendSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 10
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -euxo pipefail
+            exec > /var/log/despliegue.log 2>&1
+            export DEBIAN_FRONTEND=noninteractive
+            export HOME=/root
+            APT="apt-get -y -o DPkg::Lock::Timeout=300"
+            BACKEND="${_BackendIp}"
+
+            # 1. Swap de 2 GB: Vite build requiere memoria
+            timedatectl set-timezone America/La_Paz
+            if [ ! -f /swapfile ]; then
+              fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+              echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            fi
+
+            # 2. Paquetes: Nginx, Git, Node.js 20
+            $APT update
+            $APT install nginx git curl ca-certificates
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+            $APT install nodejs
+
+            # 3. Codigo y build de produccion
+            rm -rf /opt/asistencia
+            git clone --branch ${RepoRama} --depth 1 ${RepoUrl} /opt/asistencia
+            cd /opt/asistencia/frontend
+            npm ci
+            npm run build
+            mkdir -p /var/www/asistencia
+            rm -rf /var/www/asistencia/*
+            cp -r dist/* /var/www/asistencia/
+
+            # 4. Nginx: sirve SPA y proxy /api/ hacia el backend
+            cat > /etc/nginx/sites-available/asistencia <<EOF
+            server {
+                listen 80 default_server;
+                server_name _;
+
+                root /var/www/asistencia;
+                index index.html;
+                client_max_body_size 10m;
+
+                location /api/ {
+                    proxy_pass http://$BACKEND:8000;
+                    proxy_set_header Host \$host;
+                    proxy_set_header X-Real-IP \$remote_addr;
+                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto \$scheme;
+                }
+
+                location / {
+                    try_files \$uri \$uri/ /index.html;
+                }
+            }
+            EOF
+            rm -f /etc/nginx/sites-enabled/default
+            ln -sf /etc/nginx/sites-available/asistencia /etc/nginx/sites-enabled/asistencia
+            nginx -t
+            systemctl enable nginx
+            systemctl restart nginx
+
+            # 5. Script utilitario para actualizar frontend
+            cat > /usr/local/bin/actualizar-frontend <<'EOF'
+            #!/bin/bash
+            set -e
+            export HOME=/root
+            cd /opt/asistencia && git pull
+            cd frontend && npm ci && npm run build
+            rm -rf /var/www/asistencia/* && cp -r dist/* /var/www/asistencia/
+            systemctl reload nginx
+            echo "Frontend actualizado"
+            EOF
+            chmod +x /usr/local/bin/actualizar-frontend
+            echo "=== FRONTEND LISTO ==="
+          - _BackendIp: !GetAtt BackendInstance.PrivateIp
+      Tags:
+        - Key: Name
+          Value: !Sub '${Proyecto}-frontend'
+        - Key: rol
+          Value: frontend
+
+Outputs:
+  AppUrl:
+    Description: URL publica para entrar al Frontend del Sistema de Asistencia
+    Value: !Sub 'http://${FrontendInstance.PublicIp}'
+
+  BackendApiUrl:
+    Description: Health check y API del Backend
+    Value: !Sub 'http://${BackendInstance.PublicIp}:8000/api/health'
+
+  FrontendPublicIp:
+    Description: Direccion IP publica de la VM Frontend
+    Value: !GetAtt FrontendInstance.PublicIp
+
+  BackendPublicIp:
+    Description: Direccion IP publica de la VM Backend
+    Value: !GetAtt BackendInstance.PublicIp
