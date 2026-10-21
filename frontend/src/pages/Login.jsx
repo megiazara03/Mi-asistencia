@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Mail, Lock, User, Building2 } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowRight, Mail, Lock, User, Building2, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import client from '../api/client';
@@ -8,10 +8,11 @@ import { Button, Logo } from '../components/ui';
 import { usePageTitle } from '../utils/format';
 import { getSubdomain, buildTenantUrl } from '../utils/tenant';
 
-// Página de login híbrida con autodetección de instituto y soporte de subdominios.
+// Página de login con soporte SSO Handoff Token protegido contra doble ejecución.
 export default function Login() {
-  const { login } = useAuth();
+  const { login, canjearTicket } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   usePageTitle('Iniciar sesión');
 
   const [pestana, setPestana] = useState('estudiante'); // 'estudiante' | 'admin'
@@ -19,19 +20,40 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [conError, setConError] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  const [canjeandoSSO, setCanjeandoSSO] = useState(false);
   const [moduloActivo, setModuloActivo] = useState(null);
   const [tenantActual, setTenantActual] = useState(null);
 
   const subdominio = getSubdomain();
+  const ticketSSO = searchParams.get('ticket');
+  const ticketCanjeadoRef = useRef(false);
 
-  // 1. Obtener información del tenant actual si estamos en un subdominio
+  // 1. Canje automático con protección contra React StrictMode (ejecutar solo 1 vez)
+  useEffect(() => {
+    if (ticketSSO && !ticketCanjeadoRef.current) {
+      ticketCanjeadoRef.current = true;
+      setCanjeandoSSO(true);
+
+      canjearTicket(ticketSSO)
+        .then((u) => {
+          toast.success(`¡Bienvenido! Sesión iniciada con éxito.`);
+          const destino = u.rol === 'SUPERADMIN' ? '/superadmin' : u.rol === 'ADMIN' ? '/admin' : '/estudiante';
+          navigate(destino, { replace: true });
+        })
+        .catch((err) => {
+          setCanjeandoSSO(false);
+          toast.error(err.response?.data?.detalle || 'El ticket de acceso expiró. Ingresa tus datos.');
+        });
+    }
+  }, [ticketSSO]);
+
+  // 2. Información del tenant y módulo activo
   useEffect(() => {
     client
       .get('/tenants/actual')
       .then((res) => setTenantActual(res.data))
       .catch(() => setTenantActual(null));
 
-    // Módulo activo
     client
       .get('/modulos/activo/resumen')
       .then((res) => setModuloActivo(res.status === 200 && res.data?.nombre ? res.data : null))
@@ -56,21 +78,14 @@ export default function Login() {
       setConError(true);
       const data = err.response?.data;
 
-      // REDIRECCIÓN INTELIGENTE HÍBRIDA:
-      // Si el usuario intentó loguearse en el login central pero pertenece a un subdominio específico
+      // REDIRECCIÓN INTELIGENTE CON SSO HANDOFF (Cero reingreso de contraseña)
       if (data?.requiere_redireccion && data?.tenant_slug) {
-        toast((t) => (
-          <div>
-            <p style={{ margin: '0 0 6px 0', fontWeight: 'bold' }}>
-              Redirigiendo a tu institución: {data.tenant_nombre}
-            </p>
-            <small style={{ color: '#666' }}>Te llevaremos a tu portal en unos segundos...</small>
-          </div>
-        ), { icon: '🏫', duration: 4000 });
-
+        toast.loading(`Accediendo a ${data.tenant_nombre}...`);
+        
         setTimeout(() => {
-          window.location.href = buildTenantUrl(data.tenant_slug);
-        }, 1500);
+          const urlDestino = buildTenantUrl(data.tenant_slug, `/login?ticket=${encodeURIComponent(data.sso_ticket)}`);
+          window.location.href = urlDestino;
+        }, 800);
         return;
       }
 
@@ -78,6 +93,15 @@ export default function Login() {
     } finally {
       setEnviando(false);
     }
+  }
+
+  if (canjeandoSSO) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', background: '#f8fafc' }}>
+        <Loader2 size={36} className="anim-girar" color="#0284c7" />
+        <p style={{ color: '#475569', fontWeight: '500' }}>Iniciando sesión en tu institución...</p>
+      </div>
+    );
   }
 
   const clase = `input${conError ? ' invalido' : ''}`;

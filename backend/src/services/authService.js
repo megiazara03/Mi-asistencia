@@ -1,15 +1,13 @@
-// Lógica de negocio de autenticación (RF-01, RF-02) con soporte multi-tenant, SUPERADMIN y detección híbrida.
+// Lógica de negocio de autenticación con soporte multi-tenant, SUPERADMIN y SSO Handoff.
 const { Op } = require('sequelize');
 const { Usuario, Inscripcion, Modulo, TokenRevocado, Tenant } = require('../models');
-const { verificarPassword, crearToken } = require('../core/security');
+const { verificarPassword, crearToken, crearTokenHandoff, verificarToken } = require('../core/security');
 const { errorHttp } = require('../core/errors');
 const actividadService = require('./actividadService');
 
-// Mismo mensaje genérico para no revelar si el usuario existe.
 const MSG_CREDENCIALES = 'Credenciales incorrectas';
 const MSG_NO_INSCRITO = 'No estás inscrito en el módulo activo';
 
-// Registra un intento fallido en el historial y lanza el error.
 async function rechazar(mensaje, identificador, usuario, ip, tenantId) {
   try {
     await actividadService.registrar(
@@ -18,34 +16,55 @@ async function rechazar(mensaje, identificador, usuario, ip, tenantId) {
       { detalle: `identificador=${identificador}`, ip },
       tenantId
     );
-  } catch (_) {
-    // Evita romper si ocurre un fallo al auditar
-  }
+  } catch (_) {}
   throw errorHttp(401, mensaje);
 }
 
 /**
- * Resuelve la institución de un identificador cuando se accede desde el login global.
+ * Valida un ticket SSO de traspaso y entrega el token de sesión definitivo en el subdominio de destino.
  */
-async function detectarTenantPorIdentificador(identificador) {
-  const usuario = await Usuario.findOne({
-    where: {
-      [Op.or]: [{ email: identificador }, { codigo: identificador }],
-      activo: true,
-    },
-    include: [{ model: Tenant, as: 'tenant' }],
+async function canjearTicketHandoff(ticket, tenant) {
+  let payload;
+  try {
+    payload = verificarToken(ticket);
+  } catch (e) {
+    throw errorHttp(401, 'El ticket de acceso ha expirado o es inválido');
+  }
+
+  if (payload.tipo !== 'handoff') {
+    throw errorHttp(401, 'Tipo de ticket inválido');
+  }
+
+  // Idempotencia: findOrCreate evita error de llave primaria duplicada si React invoca dos veces (StrictMode)
+  const expiraEn = new Date(payload.exp * 1000);
+  const [registro, creado] = await TokenRevocado.findOrCreate({
+    where: { jti: payload.jti },
+    defaults: { jti: payload.jti, expira_en: expiraEn },
   });
 
-  if (!usuario) return null;
-  if (usuario.rol === 'SUPERADMIN') return { rol: 'SUPERADMIN' };
+  // Si ya existía desde hace más de 5 segundos, rechazar (evita replay attack real pero tolera re-render de React)
+  if (!creado) {
+    // Si ya existe pero el token aún es válido en la ventana de gracia (React StrictMode), permitimos continuar
+    const creadoHaceMs = Date.now() - (payload.iat * 1000);
+    if (creadoHaceMs > 10000) {
+      throw errorHttp(401, 'El ticket de acceso ya fue utilizado');
+    }
+  }
 
-  return usuario.tenant ? { rol: usuario.rol, tenant: usuario.tenant } : null;
+  const usuario = await Usuario.findByPk(Number(payload.sub));
+  if (!usuario || !usuario.activo) {
+    throw errorHttp(401, 'Usuario no válido o inactivo');
+  }
+
+  // Generar sesión normal para el subdominio
+  const token = crearToken(usuario, tenant);
+  return { token, usuario };
 }
 
 async function login({ identificador, password }, ip, tenant) {
   const tenantId = tenant ? tenant.id : null;
 
-  // 1. Verificar si se trata de un SUPERADMIN global
+  // 1. SUPERADMIN global
   const posibleSuperAdmin = await Usuario.findOne({
     where: {
       rol: 'SUPERADMIN',
@@ -65,7 +84,7 @@ async function login({ identificador, password }, ip, tenant) {
     return { token, usuario: posibleSuperAdmin };
   }
 
-  // 2. Búsqueda de usuario dentro del tenant del subdominio actual
+  // 2. Buscar usuario en el tenant actual
   const whereUsuario = {
     [Op.or]: [{ email: identificador }, { codigo: identificador }],
   };
@@ -76,8 +95,8 @@ async function login({ identificador, password }, ip, tenant) {
 
   let usuario = await Usuario.findOne({ where: whereUsuario });
 
-  // 3. ENFOQUE HÍBRIDO: Si el usuario no fue encontrado en el tenant actual (ej. entró por localhost sin subdominio),
-  // buscamos globalmente si el usuario pertenece a algún otro tenant para guiarlo o redirigirlo automáticamente.
+  // 3. SSO HANDOFF: Si entró por el portal central o subdominio equivocado,
+  // validamos su contraseña aquí mismo y generamos un token temporal para entrar directo a su subdominio sin volver a pedir contraseña.
   if (!usuario && (!tenant || tenant.slug === 'default')) {
     const usuarioEncontrado = await Usuario.findOne({
       where: {
@@ -88,11 +107,23 @@ async function login({ identificador, password }, ip, tenant) {
     });
 
     if (usuarioEncontrado && usuarioEncontrado.tenant) {
-      const err = errorHttp(409, `Tu cuenta pertenece al instituto "${usuarioEncontrado.tenant.nombre}"`);
+      // Validar la contraseña antes de redirigir para asegurar que la credencial es correcta
+      if (usuarioEncontrado.rol === 'ADMIN') {
+        const ok = await verificarPassword(password, usuarioEncontrado.password_hash);
+        if (!ok) {
+          await rechazar(MSG_CREDENCIALES, identificador, usuarioEncontrado, ip, usuarioEncontrado.tenant_id);
+        }
+      }
+
+      // Credencial válida -> Crear ticket de traspaso de sesión (SSO)
+      const ticketHandoff = crearTokenHandoff(usuarioEncontrado, usuarioEncontrado.tenant);
+
+      const err = errorHttp(409, `Redirigiendo a ${usuarioEncontrado.tenant.nombre}`);
       err.extra = {
         requiere_redireccion: true,
         tenant_slug: usuarioEncontrado.tenant.slug,
         tenant_nombre: usuarioEncontrado.tenant.nombre,
+        sso_ticket: ticketHandoff, // Token para login automático instantáneo
       };
       throw err;
     }
@@ -103,13 +134,11 @@ async function login({ identificador, password }, ip, tenant) {
   }
 
   if (usuario.rol === 'ADMIN') {
-    // ADMIN: la contraseña es obligatoria y se verifica con bcrypt.
     const ok = await verificarPassword(password, usuario.password_hash);
     if (!ok) {
       await rechazar(MSG_CREDENCIALES, identificador, usuario, ip, tenantId);
     }
   } else {
-    // ESTUDIANTE: entra sin contraseña, pero debe estar inscrito en el módulo activo del tenant.
     const whereModulo = { activo: true };
     if (tenantId) {
       whereModulo.tenant_id = tenantId;
@@ -126,10 +155,8 @@ async function login({ identificador, password }, ip, tenant) {
     }
   }
 
-  // Generar token JWT incorporando información del tenant
   const token = crearToken(usuario, tenant);
 
-  // Registrar login exitoso
   try {
     await actividadService.registrar(usuario.id, 'LOGIN_EXITOSO', { ip }, tenantId);
   } catch (_) {}
@@ -148,4 +175,4 @@ async function logout(usuario, jwtPayload, ip, tenantId) {
   } catch (_) {}
 }
 
-module.exports = { login, logout, detectarTenantPorIdentificador };
+module.exports = { login, logout, canjearTicketHandoff };

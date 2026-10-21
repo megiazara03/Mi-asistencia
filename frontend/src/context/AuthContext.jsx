@@ -41,6 +41,16 @@ export function AuthProvider({ children }) {
     return u;
   }
 
+  // Canjear ticket SSO recibido por parámetro de URL al cambiar de subdominio
+  async function canjearTicket(ticket) {
+    const res = await client.post('/auth/sso-canjear', { ticket });
+    const { access_token, usuario: u } = res.data;
+    localStorage.setItem('token', access_token);
+    localStorage.setItem('usuario', JSON.stringify(u));
+    setUsuario(u);
+    return u;
+  }
+
   async function logout() {
     try {
       await client.post('/auth/logout');
@@ -53,12 +63,14 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ usuario, cargando, login, logout }}>
+    <AuthContext.Provider value={{ usuario, cargando, login, canjearTicket, logout }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
-  return useContext(AuthContext);
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth debe usarse dentro de <AuthProvider>');
+  return ctx;
 }

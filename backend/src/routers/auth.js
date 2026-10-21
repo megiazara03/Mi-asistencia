@@ -1,4 +1,4 @@
-// Router de autenticación: login, logout, me y detección de tenant (Híbrido).
+// Router de autenticación: login, logout, me y canje de ticket SSO.
 const express = require('express');
 const { loginSchema } = require('../schemas/auth');
 const { validar } = require('../schemas/validar');
@@ -12,18 +12,20 @@ function ipDe(req) {
   return req.ip || (req.socket && req.socket.remoteAddress) || null;
 }
 
-// POST /api/auth/detectar-instituto - Permite buscar a qué instituto pertenece un correo antes o durante el login
-router.post('/detectar-instituto', async (req, res, next) => {
+// POST /api/auth/sso-canjear - Canjea un ticket temporal por una sesión activa en el subdominio
+router.post('/sso-canjear', async (req, res, next) => {
   try {
-    const { identificador } = req.body;
-    if (!identificador) {
-      return res.status(400).json({ detalle: 'Identificador requerido' });
+    const { ticket } = req.body;
+    if (!ticket) {
+      return res.status(400).json({ detalle: 'Ticket requerido' });
     }
-    const info = await authService.detectarTenantPorIdentificador(identificador);
-    if (!info) {
-      return res.status(404).json({ detalle: 'No se encontró ninguna institución asociada' });
-    }
-    res.json(info);
+    const { token, usuario } = await authService.canjearTicketHandoff(ticket, req.tenant);
+    res.json({
+      access_token: token,
+      token_type: 'bearer',
+      usuario: usuarioPublico(usuario),
+      tenant: req.tenant ? { id: req.tenant.id, nombre: req.tenant.nombre, slug: req.tenant.slug } : null,
+    });
   } catch (e) {
     next(e);
   }
