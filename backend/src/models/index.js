@@ -4,6 +4,7 @@ const { sequelize, Sequelize } = require('../database');
 
 const { DataTypes } = Sequelize;
 
+const Tenant = require('./tenant')(sequelize, DataTypes);
 const Usuario = require('./usuario')(sequelize, DataTypes);
 const Modulo = require('./modulo')(sequelize, DataTypes);
 const Inscripcion = require('./inscripcion')(sequelize, DataTypes);
@@ -13,6 +14,19 @@ const AsistenciaCambio = require('./asistenciaCambio')(sequelize, DataTypes);
 const Actividad = require('./actividad')(sequelize, DataTypes);
 const Importacion = require('./importacion')(sequelize, DataTypes);
 const TokenRevocado = require('./tokenRevocado')(sequelize, DataTypes);
+
+// --- Asociaciones de Tenant (Multi-tenancy) ---
+Tenant.hasMany(Usuario, { foreignKey: 'tenant_id', as: 'usuarios' });
+Usuario.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+
+Tenant.hasMany(Modulo, { foreignKey: 'tenant_id', as: 'modulos' });
+Modulo.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+
+Tenant.hasMany(Actividad, { foreignKey: 'tenant_id', as: 'actividades' });
+Actividad.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
+
+Tenant.hasMany(Importacion, { foreignKey: 'tenant_id', as: 'importaciones' });
+Importacion.belongsTo(Tenant, { foreignKey: 'tenant_id', as: 'tenant' });
 
 // --- Asociaciones ---
 
@@ -51,6 +65,7 @@ Importacion.belongsTo(Usuario, { foreignKey: 'usuario_id' });
 module.exports = {
   sequelize,
   Sequelize,
+  Tenant,
   Usuario,
   Modulo,
   Inscripcion,

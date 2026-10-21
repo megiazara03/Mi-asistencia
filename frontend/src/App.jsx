@@ -4,7 +4,11 @@ import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminLayout from './layouts/AdminLayout';
 import StudentLayout from './layouts/StudentLayout';
+import SuperAdminLayout from './layouts/SuperAdminLayout';
+import HomeGlobal from './pages/HomeGlobal';
 import Login from './pages/Login';
+import RegistroInstituto from './pages/RegistroInstituto';
+import SuperAdminTenants from './pages/admin/SuperAdminTenants';
 import InicioEstudiante from './pages/estudiante/Inicio';
 import Calendario from './pages/estudiante/Calendario';
 import InicioAdmin from './pages/admin/Inicio';
@@ -20,8 +24,25 @@ export default function App() {
       <Toaster position="top-right" toastOptions={{ style: { fontFamily: 'var(--font)', fontSize: '14px' } }} />
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<Login />} />
+          {/* Home Global para la plataforma SaaS */}
+          <Route path="/" element={<HomeGlobal />} />
 
+          {/* Rutas de autenticación y registro de institutos */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/registro-instituto" element={<RegistroInstituto />} />
+
+          {/* Rutas exclusivas del SUPERADMIN (Dueño del SaaS) */}
+          <Route
+            element={
+              <ProtectedRoute rol="SUPERADMIN">
+                <SuperAdminLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/superadmin" element={<SuperAdminTenants />} />
+          </Route>
+
+          {/* Rutas de Estudiante */}
           <Route
             element={
               <ProtectedRoute rol="ESTUDIANTE">
@@ -33,9 +54,10 @@ export default function App() {
             <Route path="/estudiante/calendario" element={<Calendario />} />
           </Route>
 
+          {/* Rutas de Administrador de Instituto */}
           <Route
             element={
-              <ProtectedRoute rol="ADMIN">
+              <ProtectedRoute roles={['ADMIN', 'SUPERADMIN']}>
                 <AdminLayout />
               </ProtectedRoute>
             }
@@ -47,10 +69,11 @@ export default function App() {
             <Route path="/admin/modulos/:id/datos" element={<RedirigirDatos />} />
             <Route path="/admin/estudiantes" element={<Estudiantes />} />
             <Route path="/admin/actividades" element={<Actividades />} />
+            <Route path="/admin/tenants" element={<SuperAdminTenants />} />
           </Route>
 
-          {/* Cualquier otra ruta va al login. */}
-          <Route path="*" element={<Navigate to="/login" replace />} />
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

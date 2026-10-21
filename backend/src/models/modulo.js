@@ -1,5 +1,4 @@
-// Tabla modulo: periodo/materia. Solo uno puede estar activo a la vez
-// (lo garantiza la columna generada activo_unico en la migración).
+// Tabla modulo: periodo/materia por tenant.
 module.exports = (sequelize, DataTypes) =>
   sequelize.define(
     'Modulo',
@@ -8,6 +7,17 @@ module.exports = (sequelize, DataTypes) =>
         type: DataTypes.INTEGER,
         primaryKey: true,
         autoIncrement: true,
+      },
+      tenant_id: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 1,
+        references: {
+          model: 'tenant',
+          key: 'id',
+        },
+        onUpdate: 'CASCADE',
+        onDelete: 'CASCADE',
       },
       nombre: {
         type: DataTypes.STRING(120),
@@ -36,5 +46,10 @@ module.exports = (sequelize, DataTypes) =>
       timestamps: true,
       createdAt: 'creado_en',
       updatedAt: false,
+      indexes: [
+        {
+          fields: ['tenant_id'],
+        },
+      ],
     }
   );

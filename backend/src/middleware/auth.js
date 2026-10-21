@@ -1,10 +1,10 @@
-// Middlewares de autenticación y autorización por rol.
+// Middlewares de autenticación y autorización por rol con validación de Tenant y SuperAdmin.
 const { verificarToken } = require('../core/security');
 const { errorHttp } = require('../core/errors');
 const { Usuario, TokenRevocado } = require('../models');
 
 // Verifica el token del header Authorization, comprueba que no esté revocado
-// (logout) y que el usuario exista y esté activo. Deja el usuario en req.usuario.
+// (logout), que el usuario exista y pertenezca al tenant del request (salvo que sea SUPERADMIN).
 async function getCurrentUser(req, res, next) {
   try {
     const header = req.headers.authorization || '';
@@ -31,6 +31,18 @@ async function getCurrentUser(req, res, next) {
       throw errorHttp(401, 'Usuario no válido o inactivo');
     }
 
+    // Si es SUPERADMIN, tiene acceso global a todos los tenants y a la plataforma central
+    if (usuario.rol === 'SUPERADMIN') {
+      req.usuario = usuario;
+      req.jwt = payload;
+      return next();
+    }
+
+    // Aislamiento Multi-tenant para usuarios normales (ADMIN y ESTUDIANTE)
+    if (req.tenant && usuario.tenant_id && usuario.tenant_id !== req.tenant.id) {
+      throw errorHttp(403, 'Acceso denegado: este usuario no pertenece a la organización actual');
+    }
+
     req.usuario = usuario;
     req.jwt = payload;
     next();
@@ -39,9 +51,17 @@ async function getCurrentUser(req, res, next) {
   }
 }
 
-// Exige que el usuario autenticado sea ADMIN.
+// Exige que el usuario autenticado sea SUPERADMIN (dueño de la plataforma SaaS).
+function requireSuperAdmin(req, res, next) {
+  if (!req.usuario || req.usuario.rol !== 'SUPERADMIN') {
+    return next(errorHttp(403, 'Requiere permisos de Super Administrador'));
+  }
+  next();
+}
+
+// Exige que el usuario autenticado sea ADMIN de su instituto o SUPERADMIN global.
 function requireAdmin(req, res, next) {
-  if (!req.usuario || req.usuario.rol !== 'ADMIN') {
+  if (!req.usuario || (req.usuario.rol !== 'ADMIN' && req.usuario.rol !== 'SUPERADMIN')) {
     return next(errorHttp(403, 'Requiere permisos de administrador'));
   }
   next();
@@ -55,4 +75,4 @@ function requireEstudiante(req, res, next) {
   next();
 }
 
-module.exports = { getCurrentUser, requireAdmin, requireEstudiante };
+module.exports = { getCurrentUser, requireSuperAdmin, requireAdmin, requireEstudiante };

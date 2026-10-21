@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Mail, Lock, User } from 'lucide-react';
+import { ArrowRight, Mail, Lock, User, Building2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import client from '../api/client';
 import { Button, Logo } from '../components/ui';
 import { usePageTitle } from '../utils/format';
+import { getSubdomain, buildTenantUrl } from '../utils/tenant';
 
-// Página de login con selector Estudiante / Administrador.
+// Página de login híbrida con autodetección de instituto y soporte de subdominios.
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -19,9 +20,18 @@ export default function Login() {
   const [conError, setConError] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [moduloActivo, setModuloActivo] = useState(null);
+  const [tenantActual, setTenantActual] = useState(null);
 
-  // Módulo activo (público: solo nombre y gestión). Responde 204 si no hay ninguno.
+  const subdominio = getSubdomain();
+
+  // 1. Obtener información del tenant actual si estamos en un subdominio
   useEffect(() => {
+    client
+      .get('/tenants/actual')
+      .then((res) => setTenantActual(res.data))
+      .catch(() => setTenantActual(null));
+
+    // Módulo activo
     client
       .get('/modulos/activo/resumen')
       .then((res) => setModuloActivo(res.status === 200 && res.data?.nombre ? res.data : null))
@@ -40,10 +50,31 @@ export default function Login() {
     setEnviando(true);
     try {
       const u = await login(identificador, pestana === 'admin' ? password : null);
-      navigate(u.rol === 'ADMIN' ? '/admin' : '/estudiante', { replace: true });
+      const destino = u.rol === 'SUPERADMIN' ? '/superadmin' : u.rol === 'ADMIN' ? '/admin' : '/estudiante';
+      navigate(destino, { replace: true });
     } catch (err) {
       setConError(true);
-      toast.error(err.response?.data?.detalle || 'No se pudo iniciar sesión. Intenta de nuevo.');
+      const data = err.response?.data;
+
+      // REDIRECCIÓN INTELIGENTE HÍBRIDA:
+      // Si el usuario intentó loguearse en el login central pero pertenece a un subdominio específico
+      if (data?.requiere_redireccion && data?.tenant_slug) {
+        toast((t) => (
+          <div>
+            <p style={{ margin: '0 0 6px 0', fontWeight: 'bold' }}>
+              Redirigiendo a tu institución: {data.tenant_nombre}
+            </p>
+            <small style={{ color: '#666' }}>Te llevaremos a tu portal en unos segundos...</small>
+          </div>
+        ), { icon: '🏫', duration: 4000 });
+
+        setTimeout(() => {
+          window.location.href = buildTenantUrl(data.tenant_slug);
+        }, 1500);
+        return;
+      }
+
+      toast.error(data?.detalle || 'No se pudo iniciar sesión. Intenta de nuevo.');
     } finally {
       setEnviando(false);
     }
@@ -78,8 +109,21 @@ export default function Login() {
       <div className="login-form-lado">
         <form onSubmit={enviar} className="login-form">
           <div>
+            {tenantActual ? (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#e0f2fe', color: '#0369a1', padding: '4px 10px', borderRadius: '16px', fontSize: '13px', fontWeight: '600', marginBottom: '8px' }}>
+                <Building2 size={15} /> {tenantActual.nombre}
+              </div>
+            ) : (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', color: '#475569', padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: '500', marginBottom: '8px' }}>
+                🌐 Portal Central MiAsistencia
+              </div>
+            )}
             <h1>Iniciar sesión</h1>
-            <p className="texto-muted">Elige cómo quieres ingresar.</p>
+            <p className="texto-muted">
+              {tenantActual
+                ? `Ingresa con tus credenciales de ${tenantActual.nombre}.`
+                : 'Ingresa tu usuario. Te conectaremos a tu institución.'}
+            </p>
           </div>
 
           <div className="segmentado" role="tablist">
@@ -157,6 +201,7 @@ export default function Login() {
             {enviando ? 'Ingresando…' : 'Ingresar'}
             {!enviando && <ArrowRight size={18} aria-hidden="true" />}
           </Button>
+
           {moduloActivo && (
             <p className="login-pie">
               Módulo activo:{' '}
@@ -165,6 +210,14 @@ export default function Login() {
                 {moduloActivo.gestion ? ` · ${moduloActivo.gestion}` : ''}
               </strong>
             </p>
+          )}
+
+          {!subdominio && (
+            <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '13px' }}>
+              <a href="/registro-instituto" style={{ color: '#0284c7', textDecoration: 'none' }}>
+                ¿Quieres registrar una nueva institución? Haz clic aquí
+              </a>
+            </div>
           )}
         </form>
       </div>
