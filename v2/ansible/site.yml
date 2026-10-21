@@ -1,6 +1,12 @@
 ---
-- name: Desplegar todo el Sistema de Asistencia (Backend + Frontend)
+- name: 1. Desplegar aplicacion Backend (Node 20 + Express + MySQL 8)
   import_playbook: playbook-backend.yml
 
-- name: Desplegar Frontend
+- name: 2. Desplegar aplicacion Frontend (Nginx + React Vite build)
   import_playbook: playbook-frontend.yml
+
+- name: 3. Instalar Node Exporter en todos los servidores
+  import_playbook: playbook-node-exporter.yml
+
+- name: 4. Instalar y configurar Prometheus y Grafana
+  import_playbook: playbook-monitoring.yml
