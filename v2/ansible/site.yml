@@ -1,0 +1,6 @@
+---
+- name: Desplegar todo el Sistema de Asistencia (Backend + Frontend)
+  import_playbook: playbook-backend.yml
+
+- name: Desplegar Frontend
+  import_playbook: playbook-frontend.yml

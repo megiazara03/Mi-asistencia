@@ -1,0 +1,153 @@
+---
+# ==============================================================================
+#  Playbook Ansible para configurar el FRONTEND (Ubuntu 24.04 LTS sin Docker)
+#  Instala: Swap 2GB, Nginx, Node.js (para build), compila Vite y configura Nginx
+# ==============================================================================
+- name: Aprovisionar servidor Frontend (Nginx + React SPA)
+  hosts: frontend
+  become: true
+  vars:
+    web_root: "/var/www/asistencia"
+
+  tasks:
+    # --- 1. Swap memory (2GB) para el build de Vite ---
+    - name: Verificar si ya existe swapfile
+      ansible.builtin.stat:
+        path: /swapfile
+      register: swapfile_stat
+
+    - name: Crear archivo de swap de 2GB
+      ansible.builtin.command: fallocate -l 2G /swapfile
+      when: not swapfile_stat.stat.exists
+
+    - name: Asignar permisos 0600 al swapfile
+      ansible.builtin.file:
+        path: /swapfile
+        mode: '0600'
+      when: not swapfile_stat.stat.exists
+
+    - name: Formatear swapfile
+      ansible.builtin.command: mkswap /swapfile
+      when: not swapfile_stat.stat.exists
+
+    - name: Activar swapfile
+      ansible.builtin.command: swapon /swapfile
+      when: not swapfile_stat.stat.exists
+
+    - name: Agregar swapfile a fstab
+      ansible.posix.mount:
+        name: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+
+    # --- 2. Paquetes: Nginx, git, curl y Node.js ---
+    - name: Actualizar repositorios e instalar Nginx, git y curl
+      ansible.builtin.apt:
+        update_cache: yes
+        name:
+          - nginx
+          - git
+          - curl
+          - ca-certificates
+        state: present
+
+    - name: Descargar setup de NodeSource 20
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/setup_20.x
+        dest: /tmp/nodesource_setup.sh
+        mode: '0755'
+
+    - name: Configurar repo de NodeSource
+      ansible.builtin.command: /tmp/nodesource_setup.sh
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+
+    - name: Instalar Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+
+    # --- 3. Clonar y compilar Frontend ---
+    - name: Configurar safe.directory en git para el directorio de la app
+      ansible.builtin.command: git config --system --add safe.directory "{{ app_dir }}"
+      changed_when: false
+
+    - name: Clonar repositorio
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repo_rama }}"
+        force: yes
+
+    - name: Instalar dependencias npm del frontend
+      ansible.builtin.command: npm ci
+      args:
+        chdir: "{{ app_dir }}/frontend"
+
+    - name: Compilar SPA con Vite (npm run build)
+      ansible.builtin.command: npm run build
+      args:
+        chdir: "{{ app_dir }}/frontend"
+
+    - name: Asegurar directorio web_root
+      ansible.builtin.file:
+        path: "{{ web_root }}"
+        state: directory
+        mode: '0755'
+
+    - name: Desplegar archivos compilados dist a web_root
+      ansible.builtin.copy:
+        src: "{{ app_dir }}/frontend/dist/"
+        dest: "{{ web_root }}/"
+        remote_src: yes
+        mode: '0755'
+
+    # --- 4. Configurar Nginx con reverse proxy al backend ---
+    - name: Configurar VirtualHost en Nginx con reverse proxy hacia la IP privada del backend
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/asistencia
+        content: |
+          server {
+              listen 80 default_server;
+              server_name _;
+
+              root {{ web_root }};
+              index index.html;
+              client_max_body_size 10m;
+
+              location /api/ {
+                  proxy_pass http://{{ hostvars[groups['backend'][0]]['private_ip'] | default(hostvars[groups['backend'][0]]['ansible_host']) }}:8000;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+        mode: '0644'
+
+    - name: Habilitar sitio asistencia en Nginx
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/asistencia
+        dest: /etc/nginx/sites-enabled/asistencia
+        state: link
+
+    - name: Eliminar sitio por defecto de Nginx si existe
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Reiniciar servicio Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+        enabled: yes
+
+    - name: Confirmacion
+      ansible.builtin.debug:
+        msg: "Frontend aprovisionado exitosamente con Nginx sirviendo en el puerto 80"

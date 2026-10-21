@@ -1,0 +1,21 @@
+# Inventario autogenerado por OpenTofu (contiene IPs de infraestructura activa)
+inventory.ini
+
+# Archivos de reintento de Ansible
+*.retry
+
+# Llaves privadas SSH (NUNCA subir a Git)
+*.pem
+*.key
+id_rsa*
+
+# Archivos de caché o temporales de Ansible / Python
+.ansible/
+__pycache__/
+*.pyc
+
+# Variables con contraseñas o secretos locales
+*.vault
+vault-pass*
+secrets.yml
+vars-secrets.yml

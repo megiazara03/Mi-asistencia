@@ -55,61 +55,57 @@ s3_bucket_name      = "asistencia-tfstate-v3vw1dtt"
 
 ---
 
-## 2. Módulo `v2/aws` (Despliegue con Terraform / OpenTofu)
+## 2. Módulo `v2/aws` (Despliegue con OpenTofu / Terraform)
 
-### ¿De dónde salen los valores de `v2/aws/backend.tf`?
+### Desacoplamiento del Backend (`backend.hcl`)
 
-> **¡IMPORTANTE!** Por limitación del motor de Terraform/OpenTofu, dentro del bloque `backend "s3"` **NO se permiten usar variables** (`var.algo`). Los valores deben escribirse de forma estática o pasarse mediante configuración parcial.
-
-Cada colaborador (o quien despliegue) debe asegurarse de que [`v2/aws/backend.tf`](backend.tf) tenga los valores que generó el `bootstrap`:
-
-| Campo en `backend.tf` | ¿De dónde se saca el valor? | Ejemplo real generado por bootstrap |
-| :--- | :--- | :--- |
-| `bucket` | Output `s3_bucket_name` de `v2/bootstrap/aws` | `"asistencia-tfstate-v3vw1dtt"` |
-| `key` | Ruta lógica donde se guardará el `.tfstate` dentro de S3 | `"mi-asistencia/dev/terraform.tfstate"` |
-| `region` | Output `region` de `v2/bootstrap/aws` | `"us-east-1"` |
-| `dynamodb_table` | Output `dynamodb_table_name` de `v2/bootstrap/aws` | `"asistencia-tfstate-locks"` |
-| `encrypt` | Cifrado obligatorio en reposo | `true` |
-| `role_arn` | Output `role_arn` de `v2/bootstrap/aws` (permite que colaboradores asuman el rol de la cuenta central) | `"arn:aws:iam::168692730615:role/RolTerraformColaborador"` |
-
-> **Nota sobre `role_arn`:** El ARN del rol **SIEMPRE debe llevar el Account ID de la cuenta central/creador** (en este ejemplo `168692730615`). Los colaboradores externos **NO deben cambiar ese número** por su propia cuenta, porque el rol y los recursos residen en la cuenta central.
-
-Ejemplo completo de [`v2/aws/backend.tf`](backend.tf):
-
+El archivo [`v2/aws/backend.tf`](aws/backend.tf) se mantiene completamente desacoplado y vacío para Git:
 ```hcl
 terraform {
-  backend "s3" {
-    bucket         = "asistencia-tfstate-v3vw1dtt"
-    key            = "mi-asistencia/dev/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "asistencia-tfstate-locks"
-    encrypt        = true
-    role_arn       = "arn:aws:iam::168692730615:role/RolTerraformColaborador"
-  }
+  backend "s3" {}
 }
 ```
 
+Al ejecutar `tofu apply` en `v2/bootstrap/aws`, se genera automáticamente el archivo [`v2/aws/backend.hcl`](aws/backend.hcl) con los valores reales generados para el bucket S3, la tabla DynamoDB y el rol IAM:
+
+```hcl
+bucket         = "asistencia-tfstate-xxxx"
+key            = "mi-asistencia/dev/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "asistencia-tfstate-locks"
+encrypt        = true
+role_arn       = "arn:aws:iam::168692730615:role/RolTerraformColaborador"
+```
+
+> **Nota de seguridad:** `backend.hcl` está protegido en `.gitignore` para no ser subido al repositorio.
+
 ---
 
-### Pasos para desplegar la aplicación:
+### Flujo de trabajo: Cada vez que trabajes o hagas cambios en `v2/aws`
 
-1. **Configura tus variables locales:**
-   ```bash
-   cd v2/aws
-   cp terraform.tfvars.example terraform.tfvars
-   ```
-   *En `terraform.tfvars` asegúrate de configurar tu contraseña `admin_password` y opcionalmente tu `role_arn`.*
+#### A. Si es la primera vez que entras (o si cambió el bootstrap):
+Solo la primera vez inicializas conectando con el backend remoto de S3 generado:
 
-2. **Inicializa la conexión con el backend remoto:**
-   ```bash
-   tofu init -reconfigure
-   ```
+```powershell
+cd C:\Users\Usuario\Documents\m2\Mi-asistencia\v2\aws
 
-3. **Revisa y aplica los cambios:**
-   ```bash
-   tofu plan
-   tofu apply
-   ```
+# En PowerShell usar comillas en el argumento:
+tofu init "-backend-config=backend.hcl" -reconfigure
+```
+
+#### B. Para cada cambio normal en `v2/aws` (tu día a día):
+A partir de ahí, ya no tienes que pasar `-backend-config` en cada comando. Tu flujo es el estándar con OpenTofu:
+
+```powershell
+# 1. Ver qué cambios se van a aplicar
+tofu plan
+
+# 2. Aplicar tus cambios a la infraestructura
+tofu apply
+
+# 3. (Opcional) Si quieres destruir la infraestructura de la app
+tofu destroy
+```
 
 > **Seguridad:** Los archivos `.pem` (llave SSH privada), `.tfvars` (contraseñas/IPs) y la carpeta `.terraform/` están en `.gitignore` y **NUNCA se suben a GitHub**.
 
