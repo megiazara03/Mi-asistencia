@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Infraestructura Principal del Sistema de Asistencia (2 EC2s: Backend
+  + Frontend)'
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC en la que se desplegara la infraestructura (selecciona tu 
+      VPC default o personalizada)
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subred publica donde se crearan las instancias
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Par de llaves SSH existente en AWS EC2
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI Ubuntu Server 24.04 LTS (x86_64) en la region elegida
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+    - t2.micro
+    - t3.micro
+    - t3.small
+    Description: Tipo de instancia EC2 (t3.micro / t2.micro entran en Free Tier)
+  MiIp:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: Tu direccion IP para restringir SSH en formato CIDR (ej. 
+      190.10.20.30/32 o 0.0.0.0/0)
+  Proyecto:
+    Type: String
+    Default: asistencia
+    Description: Prefijo para nombrar los recursos
+  RepoUrl:
+    Type: String
+    Default: https://github.com/escobarnina/Mi-asistencia.git
+    Description: Repositorio Git del proyecto
+  RepoRama:
+    Type: String
+    Default: main
+    Description: Rama a clonar
+  DbPassword:
+    Type: String
+    NoEcho: true
+    Default: AsistenciaSecretDb2026!
+    Description: Contrasena para la base de datos MySQL del backend
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Default: SuperSecretKeyForJWTAuthTokenAsistenciaApp2026!
+    Description: Secreto JWT para sesiones y autenticacion
+  AdminEmail:
+    Type: String
+    Default: admin@asistencia.local
+    Description: Correo del administrador inicial
+  AdminPassword:
+    Type: String
+    NoEcho: true
+    Default: Admin1234*
+    Description: Contrasena del usuario administrador
+  CargarSemilla:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+    - 'true'
+    - 'false'
+    Description: Cargar datos de prueba de docentes, materias y estudiantes
+Resources:
+  SecurityStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 
+        https://s3.us-east-1.amazonaws.com/mi-bucket-cloudformation-temp/3888917567f43d289e027adad0b2f027.template
+      Parameters:
+        VpcId:
+          Ref: VpcId
+        MiIp:
+          Ref: MiIp
+        Proyecto:
+          Ref: Proyecto
+  BackendStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: SecurityStack
+    Properties:
+      TemplateURL: 
+        https://s3.us-east-1.amazonaws.com/mi-bucket-cloudformation-temp/4ce5ba552957f4c160634849f596f97d.template
+      Parameters:
+        SubnetId:
+          Ref: SubnetId
+        SecurityGroupId:
+          Fn::GetAtt:
+          - SecurityStack
+          - Outputs.BackendSecurityGroupId
+        AmiId:
+          Ref: AmiId
+        KeyName:
+          Ref: KeyName
+        InstanceType:
+          Ref: InstanceType
+        Proyecto:
+          Ref: Proyecto
+        RepoUrl:
+          Ref: RepoUrl
+        RepoRama:
+          Ref: RepoRama
+        DbPassword:
+          Ref: DbPassword
+        JwtSecret:
+          Ref: JwtSecret
+        AdminEmail:
+          Ref: AdminEmail
+        AdminPassword:
+          Ref: AdminPassword
+        CargarSemilla:
+          Ref: CargarSemilla
+  FrontendStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: BackendStack
+    Properties:
+      TemplateURL: 
+        https://s3.us-east-1.amazonaws.com/mi-bucket-cloudformation-temp/8cac0a3a8ad4a6759af64a77273050bc.template
+      Parameters:
+        SubnetId:
+          Ref: SubnetId
+        SecurityGroupId:
+          Fn::GetAtt:
+          - SecurityStack
+          - Outputs.FrontendSecurityGroupId
+        AmiId:
+          Ref: AmiId
+        KeyName:
+          Ref: KeyName
+        InstanceType:
+          Ref: InstanceType
+        Proyecto:
+          Ref: Proyecto
+        RepoUrl:
+          Ref: RepoUrl
+        RepoRama:
+          Ref: RepoRama
+        BackendPrivateIp:
+          Fn::GetAtt:
+          - BackendStack
+          - Outputs.BackendPrivateIp
+Outputs:
+  AppUrl:
+    Description: URL publica para entrar al Frontend del Sistema de Asistencia
+    Value:
+      Fn::GetAtt:
+      - FrontendStack
+      - Outputs.AppUrl
+  BackendApiUrl:
+    Description: Health check y API del Backend
+    Value:
+      Fn::GetAtt:
+      - BackendStack
+      - Outputs.BackendApiUrl
+  FrontendPublicIp:
+    Description: Direccion IP publica de la VM Frontend
+    Value:
+      Fn::GetAtt:
+      - FrontendStack
+      - Outputs.FrontendPublicIp
+  BackendPublicIp:
+    Description: Direccion IP publica de la VM Backend
+    Value:
+      Fn::GetAtt:
+      - BackendStack
+      - Outputs.BackendPublicIp
