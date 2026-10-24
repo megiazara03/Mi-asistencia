@@ -26,3 +26,9 @@ Thumbs.db
 
 # Cobertura de pruebas
 coverage/
+
+
+# CloudFormation
+cloudformation/parameters.json
+cloudformation/packaged.yaml
+cloudformation/*.pem
