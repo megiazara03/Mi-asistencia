@@ -126,3 +126,5 @@ Para dar de baja todos los recursos y evitar costos:
 ```bash
 aws cloudformation delete-stack --stack-name stack-asistencia
 ```
+
+<!-- trigger deploy -->
