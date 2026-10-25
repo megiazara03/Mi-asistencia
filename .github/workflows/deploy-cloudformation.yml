@@ -48,6 +48,7 @@ jobs:
                 SubnetId=${{ secrets.CFN_SUBNET_ID }} \
                 KeyName=${{ secrets.CFN_KEY_NAME }} \
                 AmiId=${{ secrets.CFN_AMI_ID }} \
+                MiIp=${{ secrets.CFN_MI_IP }} \
                 DbPassword=${{ secrets.CFN_DB_PASSWORD }} \
                 JwtSecret=${{ secrets.CFN_JWT_SECRET }} \
                 AdminEmail=${{ secrets.CFN_ADMIN_EMAIL }} \
@@ -59,3 +60,4 @@ jobs:
             --stack-name stack-asistencia-modular \
             --query "Stacks[0].Outputs" \
             --output table
+
