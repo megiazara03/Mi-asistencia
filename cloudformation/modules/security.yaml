@@ -69,6 +69,11 @@ Resources:
           ToPort: 8000
           SourceSecurityGroupId: !Ref FrontendSecurityGroup
           Description: 'Trafico API desde el Frontend Nginx'
+        - IpProtocol: tcp
+          FromPort: 9100
+          ToPort: 9100
+          CidrIp: !Ref MiIp
+          Description: 'Metricas Node Exporter (Monitoreo)'
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
