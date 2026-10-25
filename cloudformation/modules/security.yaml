@@ -7,7 +7,7 @@ Parameters:
     Description: VPC donde se crearan los grupos de seguridad (por defecto o personalizada)
   MiIp:
     Type: String
-    Default: '0.0.0.0/0'
+    Default: '161.138.104.154/32'
     Description: Direccion IP autorizada para acceso SSH (ej. 181.115.1.2/32 o 0.0.0.0/0)
   Proyecto:
     Type: String
