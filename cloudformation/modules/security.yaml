@@ -32,19 +32,6 @@ Resources:
           ToPort: 22
           CidrIp: !Ref MiIp
           Description: 'SSH para administracion'
-        - IpProtocol: tcp
-<<<<<<< Updated upstream
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-          Description: 'HTTPS'
-=======
-          FromPort: 9100
-          ToPort: 9100
-          CidrIp: !Ref MiIp
-          Description: 'Metricas Node Exporter (Monitoreo)'
->>>>>>> Stashed changes
-
 
       SecurityGroupEgress:
         - IpProtocol: -1
