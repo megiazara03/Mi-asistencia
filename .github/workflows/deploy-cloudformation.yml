@@ -2,15 +2,16 @@ name: Deploy CloudFormation Stack
 
 on:
   push:
-    # Se dispara únicamente cuando hay cambios en la carpeta cloudformation/
     paths:
       - 'cloudformation/**'
+      - '.github/workflows/**'
     branches:
       - main
-      - feat/cloudformation # tu rama actual
+      - feat/cloudformation
+  workflow_dispatch:
 
 permissions:
-  id-token: write   # Necesario si usas OIDC
+  id-token: write
   contents: read
 
 jobs:
@@ -60,4 +61,3 @@ jobs:
             --stack-name stack-asistencia-modular \
             --query "Stacks[0].Outputs" \
             --output table
-
