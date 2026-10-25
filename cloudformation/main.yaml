@@ -134,3 +134,4 @@ Outputs:
   BackendPublicIp:
     Description: Direccion IP publica de la VM Backend
     Value: !GetAtt BackendStack.Outputs.BackendPublicIp
+
