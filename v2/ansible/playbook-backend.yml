@@ -1,0 +1,199 @@
+---
+# ==============================================================================
+#  Playbook Ansible para configurar el BACKEND (Ubuntu 24.04 LTS sin Docker)
+#  Instala: Swap, MySQL 8, Node.js 20 LTS, Systemd Service para la API
+# ==============================================================================
+- name: Aprovisionar servidor Backend (Node 20 + Express + MySQL 8 nativo)
+  hosts: backend
+  become: true
+
+  tasks:
+    # --- 1. Swap memory (1GB) para que no crashee la t3.micro ---
+    - name: Verificar si ya existe swapfile
+      ansible.builtin.stat:
+        path: /swapfile
+      register: swapfile_stat
+
+    - name: Crear archivo de swap de 1GB
+      ansible.builtin.command: fallocate -l 1G /swapfile
+      when: not swapfile_stat.stat.exists
+
+    - name: Asignar permisos 0600 al swapfile
+      ansible.builtin.file:
+        path: /swapfile
+        mode: '0600'
+      when: not swapfile_stat.stat.exists
+
+    - name: Formatear swapfile
+      ansible.builtin.command: mkswap /swapfile
+      when: not swapfile_stat.stat.exists
+
+    - name: Activar swapfile
+      ansible.builtin.command: swapon /swapfile
+      when: not swapfile_stat.stat.exists
+
+    - name: Agregar swapfile a fstab para persistencia
+      ansible.posix.mount:
+        name: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+
+    # --- 2. Paquetes base y MySQL 8 ---
+    - name: Actualizar repositorios apt e instalar dependencias base
+      ansible.builtin.apt:
+        update_cache: yes
+        name:
+          - curl
+          - git
+          - build-essential
+          - ca-certificates
+          - mysql-server
+        state: present
+
+    - name: Configurar MySQL (utf8mb4 y bind localhost)
+      ansible.builtin.copy:
+        dest: /etc/mysql/mysql.conf.d/zz-asistencia.cnf
+        content: |
+          [mysqld]
+          character-set-server = utf8mb4
+          collation-server     = utf8mb4_unicode_ci
+          bind-address         = 127.0.0.1
+        mode: '0644'
+
+    - name: Reiniciar y habilitar servicio MySQL
+      ansible.builtin.service:
+        name: mysql
+        state: restarted
+        enabled: yes
+
+    - name: Crear base de datos de asistencia
+      ansible.builtin.command: >
+        mysql -e "CREATE DATABASE IF NOT EXISTS {{ db_name }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+      changed_when: false
+
+    - name: Crear usuario de base de datos
+      ansible.builtin.command: >
+        mysql -e "CREATE USER IF NOT EXISTS '{{ db_user }}'@'localhost' IDENTIFIED BY '{{ db_password }}';
+                  GRANT ALL PRIVILEGES ON {{ db_name }}.* TO '{{ db_user }}'@'localhost';
+                  FLUSH PRIVILEGES;"
+      changed_when: false
+
+    # --- 3. Instalar Node.js 20 LTS ---
+    - name: Descargar setup de NodeSource 20
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/setup_20.x
+        dest: /tmp/nodesource_setup.sh
+        mode: '0755'
+
+    - name: Configurar repo de NodeSource
+      ansible.builtin.command: /tmp/nodesource_setup.sh
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+
+    - name: Instalar Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: yes
+
+    # --- 4. Usuario del sistema y clonación de la App ---
+    - name: Crear usuario de sistema para la app
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        system: yes
+        create_home: yes
+        shell: /bin/bash
+
+    - name: Configurar safe.directory en git para el directorio de la app
+      ansible.builtin.command: git config --system --add safe.directory "{{ app_dir }}"
+      changed_when: false
+
+    - name: Clonar repositorio de la aplicacion
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repo_rama }}"
+        force: yes
+
+    - name: Crear archivo .env en la raiz de la aplicacion
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/.env"
+        content: |
+          PORT=8000
+          NODE_ENV=production
+          DB_HOST=127.0.0.1
+          DB_PORT=3306
+          DB_USER={{ db_user }}
+          DB_PASS={{ db_password }}
+          DB_NAME={{ db_name }}
+          JWT_SECRET={{ jwt_secret }}
+          ADMIN_EMAIL={{ admin_email }}
+          ADMIN_PASSWORD={{ admin_password }}
+        mode: '0600'
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+
+    - name: Cambiar propietario del directorio de la app
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        recurse: yes
+
+    - name: Instalar dependencias npm del backend
+      ansible.builtin.command: npm ci --omit=dev
+      args:
+        chdir: "{{ app_dir }}/backend"
+
+    - name: Asegurar permisos finales del directorio para el usuario de la app
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        recurse: yes
+
+    # --- 5. Servicio Systemd para la API ---
+    - name: Crear archivo de servicio systemd para la API
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/asistencia-backend.service
+        content: |
+          [Unit]
+          Description=Sistema de Asistencia API (Node 20 + Express)
+          After=network.target mysql.service
+          Wants=mysql.service
+
+          [Service]
+          Type=simple
+          User={{ app_user }}
+          WorkingDirectory={{ app_dir }}/backend
+          ExecStart=/usr/bin/npm start
+          Restart=always
+          RestartSec=5
+          EnvironmentFile={{ app_dir }}/.env
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+
+    - name: Recargar systemd e iniciar servicio backend
+      ansible.builtin.systemd:
+        daemon_reload: yes
+        name: asistencia-backend
+        state: restarted
+        enabled: yes
+
+    - name: Verificar estado del backend
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8000/api/health"
+        status_code: 200
+      register: health_check
+      retries: 5
+      delay: 3
+      until: health_check.status == 200
+      ignore_errors: yes
+
+    - name: Confirmacion
+      ansible.builtin.debug:
+        msg: "Backend aprovisionado exitosamente en el puerto 8000"

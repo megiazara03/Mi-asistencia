@@ -1,0 +1,87 @@
+---
+- name: Aprovisionar servidor de prueba EC2 (Amazon Linux 2023)
+  hosts: servidores_aws
+  become: true
+
+  tasks:
+    # 1. Actualizar el sistema operativo
+    - name: Actualizar todos los paquetes del sistema
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_cache: yes
+
+    # 2. Instalar herramientas basicas utiles
+    - name: Instalar herramientas esenciales (git, htop, curl, wget, tar)
+      ansible.builtin.dnf:
+        name:
+          - git
+          - htop
+          - curl
+          - wget
+          - tar
+        state: present
+
+    # 3. Instalar Node.js y npm (Amazon Linux 2023)
+    - name: Instalar Node.js 20 y npm
+      ansible.builtin.dnf:
+        name: nodejs20
+        state: present
+
+    # 4. Instalar un servidor web Nginx de prueba
+    - name: Instalar Nginx
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+
+    - name: Iniciar y habilitar servicio Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    # 5. Crear una pagina HTML de bienvenida para verificar desde el navegador
+    - name: Crear index.html de prueba en Nginx
+      ansible.builtin.copy:
+        dest: /usr/share/nginx/html/index.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Ansible OK</title>
+            <style>
+              body { font-family: Arial, sans-serif; text-align: center; margin-top: 10%; background: #0f172a; color: #f8fafc; }
+              h1 { color: #38bdf8; }
+              .card { background: #1e293b; display: inline-block; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h1>¡Servidor aprovisionado con Ansible con exito!</h1>
+              <p>Host: Amazon Linux 2023 (EC2)</p>
+              <p>Node.js, npm, git y Nginx instalados sin Docker.</p>
+            </div>
+          </body>
+          </html>
+        mode: '0644'
+
+    # 6. Verificaciones finales en consola
+    - name: Obtener version de Node.js
+      ansible.builtin.command: node -v
+      register: node_version
+      changed_when: false
+
+    - name: Obtener version de NPM
+      ansible.builtin.command: npm -v
+      register: npm_version
+      changed_when: false
+
+    - name: Mostrar resumen de instalacion
+      ansible.builtin.debug:
+        msg:
+          - "========================================"
+          - "Node.js instalado: {{ node_version.stdout }}"
+          - "NPM instalado:     {{ npm_version.stdout }}"
+          - "Nginx:            Activo en puerto 80"
+          - "Prueba en web:    http://{{ ansible_host }}"
+          - "========================================"

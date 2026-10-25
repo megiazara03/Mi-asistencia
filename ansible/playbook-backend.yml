@@ -1,0 +1,60 @@
+---
+- name: Aprovisionar servidor Backend (Node.js + MySQL sin Docker)
+  hosts: servidores_aws
+  become: true
+  vars:
+    node_version: "20.x"
+    db_name: "asistencia"
+    db_user: "app_user"
+    db_password: "PasswordSeguro123!"
+
+  tasks:
+    - name: Actualizar repositorios apt y paquetes básicos
+      ansible.builtin.apt:
+        update_cache: yes
+        name:
+          - curl
+          - git
+          - build-essential
+          - ufw
+        state: present
+
+    # ---------- 1. MySQL 8 Nativo ----------
+    - name: Instalar MySQL Server
+      ansible.builtin.apt:
+        name: mysql-server
+        state: present
+
+    - name: Asegurar que el servicio MySQL este iniciado y habilitado
+      ansible.builtin.service:
+        name: mysql
+        state: started
+        enabled: yes
+
+    # ---------- 2. Node.js 20 LTS ----------
+    - name: Descargar script de instalacion de NodeSource Node 20
+      ansible.builtin.get_url:
+        url: "https://deb.nodesource.com/setup_{{ node_version }}"
+        dest: /tmp/nodesource_setup.sh
+        mode: '0755'
+
+    - name: Ejecutar script de configuracion del repositorio de NodeSource
+      ansible.builtin.command: /tmp/nodesource_setup.sh
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+
+    - name: Instalar Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: yes
+
+    # ---------- 3. Verificacion final ----------
+    - name: Verificar version instalada de Node
+      ansible.builtin.command: node -v
+      register: node_version_out
+      changed_when: false
+
+    - name: Mostrar version de Node.js
+      ansible.builtin.debug:
+        msg: "Node.js instalado con exito: {{ node_version_out.stdout }}"

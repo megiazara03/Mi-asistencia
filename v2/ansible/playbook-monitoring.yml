@@ -1,0 +1,196 @@
+---
+# ==============================================================================
+#  Playbook Ansible para instalar Prometheus y Grafana (NATIVO, sin Docker)
+#  Se instala en el host [backend] y monitorea tanto el backend como el frontend
+# ==============================================================================
+- name: Instalar y Configurar Prometheus y Grafana
+  hosts: backend
+  become: true
+  vars:
+    prometheus_version: "2.54.1"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. INSTALACIÓN DE PROMETHEUS
+    # --------------------------------------------------------------------------
+    - name: Crear usuario de sistema para Prometheus
+      ansible.builtin.user:
+        name: prometheus
+        system: yes
+        shell: /bin/false
+
+    - name: Crear directorios de configuracion y datos de Prometheus
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+
+    - name: Descargar binario de Prometheus
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/prometheus.tar.gz"
+        mode: '0644'
+
+    - name: Descomprimir Prometheus
+      ansible.builtin.unarchive:
+        src: "/tmp/prometheus.tar.gz"
+        dest: "/tmp"
+        remote_src: yes
+
+    - name: Instalar binarios prometheus y promtool en /usr/local/bin
+      ansible.builtin.copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        remote_src: yes
+        mode: '0755'
+        owner: prometheus
+        group: prometheus
+      loop:
+        - prometheus
+        - promtool
+
+    - name: Configurar prometheus.yml con targets de backend y frontend
+      ansible.builtin.copy:
+        dest: /etc/prometheus/prometheus.yml
+        content: |
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+
+            - job_name: 'backend_node'
+              static_configs:
+                - targets: ['127.0.0.1:9100']
+                  labels:
+                    instance: 'backend-vm'
+
+            - job_name: 'backend_api'
+              metrics_path: '/api/health'
+              static_configs:
+                - targets: ['127.0.0.1:8000']
+                  labels:
+                    instance: 'backend-api'
+
+            - job_name: 'frontend_node'
+              static_configs:
+                - targets:
+                    - "{{ hostvars[groups['frontend'][0]]['private_ip'] | default(hostvars[groups['frontend'][0]]['ansible_host']) }}:9100"
+                  labels:
+                    instance: 'frontend-vm'
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+
+    - name: Crear servicio systemd para Prometheus
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/prometheus.service
+        content: |
+          [Unit]
+          Description=Prometheus Server
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=prometheus
+          Group=prometheus
+          Type=simple
+          ExecStart=/usr/local/bin/prometheus \
+            --config.file=/etc/prometheus/prometheus.yml \
+            --storage.tsdb.path=/var/lib/prometheus/ \
+            --web.console.templates=/etc/prometheus/consoles \
+            --web.console.libraries=/etc/prometheus/console_libraries
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+
+    - name: Iniciar y habilitar servicio Prometheus
+      ansible.builtin.systemd:
+        daemon_reload: yes
+        name: prometheus
+        state: restarted
+        enabled: yes
+
+    # --------------------------------------------------------------------------
+    # 2. INSTALACIÓN DE GRAFANA (Repositorio Oficial APT)
+    # --------------------------------------------------------------------------
+    - name: Instalar paquetes necesarios para Grafana APT
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - software-properties-common
+          - wget
+          - gpg
+        state: present
+
+    - name: Descargar e importar clave GPG de Grafana
+      ansible.builtin.shell: |
+        wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor | tee /etc/apt/keyrings/grafana.gpg > /dev/null
+      args:
+        creates: /etc/apt/keyrings/grafana.gpg
+
+    - name: Configurar repositorio APT de Grafana
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+        state: present
+        filename: grafana
+
+    - name: Instalar Grafana
+      ansible.builtin.apt:
+        name: grafana
+        state: present
+        update_cache: yes
+
+    # --------------------------------------------------------------------------
+    # 3. CONFIGURAR DATASOURCE PROMETHEUS EN GRAFANA AUTOMÁTICAMENTE
+    # --------------------------------------------------------------------------
+    - name: Crear directorio de provisionamiento de datasources
+      ansible.builtin.file:
+        path: /etc/grafana/provisioning/datasources
+        state: directory
+        owner: root
+        group: grafana
+        mode: '0750'
+
+    - name: Configurar Prometheus como DataSource por defecto en Grafana
+      ansible.builtin.copy:
+        dest: /etc/grafana/provisioning/datasources/prometheus.yaml
+        content: |
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              type: prometheus
+              access: proxy
+              url: http://localhost:9090
+              isDefault: true
+              editable: true
+        owner: root
+        group: grafana
+        mode: '0640'
+
+    - name: Iniciar y habilitar servicio Grafana Server
+      ansible.builtin.systemd:
+        daemon_reload: yes
+        name: grafana-server
+        state: restarted
+        enabled: yes
+
+    - name: Resumen de acceso
+      ansible.builtin.debug:
+        msg:
+          - "=========================================================="
+          - "Grafana instalado en:    http://{{ ansible_host }}:3000"
+          - "Usuario inicial Grafana: admin / admin"
+          - "Prometheus instalado en: http://{{ ansible_host }}:9090"
+          - "DataSource Prometheus:   Configurado automaticamente"
+          - "=========================================================="

@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Modulo de Instancia EC2 Backend (Node.js 20 + Express + MySQL 8)'
+
+Parameters:
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subred publica donde se desplegara la instancia
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: ID del Security Group para el backend
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI Ubuntu Server 24.04 LTS
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nombre del par de llaves SSH
+  InstanceType:
+    Type: String
+    Default: 't3.micro'
+    AllowedValues:
+      - 't2.micro'
+      - 't3.micro'
+      - 't3.small'
+  Proyecto:
+    Type: String
+    Default: 'asistencia'
+  RepoUrl:
+    Type: String
+    Default: 'https://github.com/escobarnina/Mi-asistencia.git'
+  RepoRama:
+    Type: String
+    Default: 'main'
+  DbPassword:
+    Type: String
+    NoEcho: true
+    Description: Contrasena de la base de datos MySQL
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Description: Secreto para la generacion y validacion de tokens JWT
+  AdminEmail:
+    Type: String
+    Default: 'admin@asistencia.local'
+  AdminPassword:
+    Type: String
+    NoEcho: true
+    Default: 'Admin1234*'
+  CargarSemilla:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+
+Resources:
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    DeletionPolicy: Retain
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: false
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -euxo pipefail
+            exec > /var/log/despliegue.log 2>&1
+            export DEBIAN_FRONTEND=noninteractive
+            export HOME=/root
+            APT="apt-get -y -o DPkg::Lock::Timeout=300"
+
+            # 1. Zona horaria y Swap
+            timedatectl set-timezone America/La_Paz
+            if [ ! -f /swapfile ]; then
+              fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+              echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            fi
+
+            # 2. Paquetes: Node.js 20, MySQL 8, git
+            $APT update
+            $APT install git curl ca-certificates mysql-server
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+            $APT install nodejs
+
+            # 3. MySQL Server configuracion
+            cat > /etc/mysql/mysql.conf.d/zz-asistencia.cnf <<'EOF'
+            [mysqld]
+            character-set-server = utf8mb4
+            collation-server     = utf8mb4_unicode_ci
+            bind-address         = 127.0.0.1
+            EOF
+            systemctl restart mysql
+
+            mysql <<'EOF'
+            CREATE DATABASE IF NOT EXISTS asistencia CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+            CREATE USER IF NOT EXISTS 'asistencia'@'localhost' IDENTIFIED BY '${_DbPassword}';
+            CREATE USER IF NOT EXISTS 'asistencia'@'127.0.0.1' IDENTIFIED BY '${_DbPassword}';
+            GRANT ALL PRIVILEGES ON asistencia.* TO 'asistencia'@'localhost';
+            GRANT ALL PRIVILEGES ON asistencia.* TO 'asistencia'@'127.0.0.1';
+            FLUSH PRIVILEGES;
+            EOF
+
+            # 4. Usuario de aplicacion y codigo fuente
+            id asistencia || useradd --system --create-home --shell /bin/bash asistencia
+            rm -rf /opt/asistencia
+            git clone --branch ${RepoRama} --depth 1 ${RepoUrl} /opt/asistencia
+
+            cat > /opt/asistencia/.env <<'EOF'
+            NODE_ENV=production
+            PORT=8000
+            DB_HOST=127.0.0.1
+            DB_PORT=3306
+            MYSQL_DATABASE=asistencia
+            MYSQL_USER=asistencia
+            MYSQL_PASSWORD=${_DbPassword}
+            JWT_SECRET=${_JwtSecret}
+            JWT_MINUTOS=480
+            ADMIN_EMAIL=${AdminEmail}
+            ADMIN_PASSWORD='${AdminPassword}'
+            TZ=America/La_Paz
+            CORS_ORIGINS=http://localhost:5173
+            EOF
+            chmod 600 /opt/asistencia/.env
+            chown -R asistencia:asistencia /opt/asistencia
+
+            # 5. Dependencias y migraciones
+            sudo -u asistencia -H bash -c 'cd /opt/asistencia/backend && npm ci && NODE_ENV=production npm run migrate'
+            if [ "${CargarSemilla}" = "true" ]; then
+              sudo -u asistencia -H bash -c 'cd /opt/asistencia/backend && NODE_ENV=production npm run seed'
+            fi
+
+            # 6. Servicio systemd
+            cat > /etc/systemd/system/asistencia-backend.service <<'EOF'
+            [Unit]
+            Description=Sistema de Asistencia - Backend (Node/Express)
+            After=network.target mysql.service
+            Requires=mysql.service
+
+            [Service]
+            User=asistencia
+            WorkingDirectory=/opt/asistencia/backend
+            Environment=NODE_ENV=production
+            ExecStart=/usr/bin/node src/server.js
+            Restart=always
+            RestartSec=5
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+            systemctl daemon-reload
+            systemctl enable --now asistencia-backend
+
+            # 7. Script utilitario para actualizar backend
+            cat > /usr/local/bin/actualizar-backend <<'EOF'
+            #!/bin/bash
+            set -e
+            sudo -u asistencia -H bash -c 'cd /opt/asistencia && git pull && cd backend && npm ci && NODE_ENV=production npm run migrate'
+            systemctl restart asistencia-backend
+            echo "Backend actualizado"
+            EOF
+            chmod +x /usr/local/bin/actualizar-backend
+            echo "=== BACKEND LISTO ==="
+          - _DbPassword: !Ref DbPassword
+            _JwtSecret: !Ref JwtSecret
+      Tags:
+        - Key: Name
+          Value: !Sub '${Proyecto}-backend'
+        - Key: rol
+          Value: backend
+
+Outputs:
+  BackendInstanceId:
+    Description: ID de la instancia Backend
+    Value: !Ref BackendInstance
+  BackendPublicIp:
+    Description: IP publica de la instancia Backend
+    Value: !GetAtt BackendInstance.PublicIp
+  BackendPrivateIp:
+    Description: IP privada de la instancia Backend (usada por Frontend)
+    Value: !GetAtt BackendInstance.PrivateIp
+    Export:
+      Name: !Sub '${AWS::StackName}-BackendPrivateIp'
+  BackendApiUrl:
+    Description: Endpoint publico de la API
+    Value: !Sub 'http://${BackendInstance.PublicIp}:8000/api/health'
+

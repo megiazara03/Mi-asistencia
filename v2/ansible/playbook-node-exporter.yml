@@ -1,0 +1,63 @@
+---
+# ==============================================================================
+#  Playbook Ansible para instalar Node Exporter en TODOS los hosts (Backend y Frontend)
+#  Permite recolectar metricas de hardware y SO (CPU, RAM, Disco, Red)
+# ==============================================================================
+- name: Instalar Node Exporter para metricas del sistema operativo
+  hosts: all
+  become: true
+  vars:
+    node_exporter_version: "1.8.2"
+
+  tasks:
+    - name: Crear usuario de sistema para node_exporter
+      ansible.builtin.user:
+        name: node_exporter
+        system: yes
+        shell: /bin/false
+
+    - name: Descargar binario de Node Exporter
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/node_exporter.tar.gz"
+        mode: '0644'
+
+    - name: Descomprimir Node Exporter
+      ansible.builtin.unarchive:
+        src: "/tmp/node_exporter.tar.gz"
+        dest: "/tmp"
+        remote_src: yes
+
+    - name: Mover binario a /usr/local/bin
+      ansible.builtin.copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: "/usr/local/bin/node_exporter"
+        remote_src: yes
+        mode: '0755'
+        owner: node_exporter
+        group: node_exporter
+
+    - name: Crear servicio systemd para Node Exporter
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter
+          After=network.target
+
+          [Service]
+          User=node_exporter
+          Group=node_exporter
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+
+    - name: Iniciar y habilitar servicio node_exporter
+      ansible.builtin.systemd:
+        daemon_reload: yes
+        name: node_exporter
+        state: started
+        enabled: yes

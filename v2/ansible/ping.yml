@@ -1,0 +1,7 @@
+---
+- name: Probar conectividad con las VMs de v2
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ping SSH
+      ansible.builtin.ping:
