@@ -17,6 +17,7 @@ Parameters:
 Resources:
   FrontendSecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    DeletionPolicy: Retain
     Properties:
       GroupDescription: 'Frontend: HTTP publico (80) y SSH (22)'
       VpcId: !Ref VpcId
@@ -41,6 +42,7 @@ Resources:
 
   BackendSecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    DeletionPolicy: Retain
     Properties:
       GroupDescription: 'Backend: API (8000) y SSH (22). MySQL no expuesto publicamente.'
       VpcId: !Ref VpcId
@@ -80,3 +82,4 @@ Outputs:
     Value: !Ref BackendSecurityGroup
     Export:
       Name: !Sub '${AWS::StackName}-BackendSecurityGroupId'
+

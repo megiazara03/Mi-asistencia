@@ -53,6 +53,7 @@ Parameters:
 Resources:
   BackendInstance:
     Type: AWS::EC2::Instance
+    DeletionPolicy: Retain
     Properties:
       ImageId: !Ref AmiId
       InstanceType: !Ref InstanceType
@@ -65,7 +66,7 @@ Resources:
           Ebs:
             VolumeSize: 20
             VolumeType: gp3
-            DeleteOnTermination: true
+            DeleteOnTermination: false
       UserData:
         Fn::Base64: !Sub
           - |
@@ -190,3 +191,4 @@ Outputs:
   BackendApiUrl:
     Description: Endpoint publico de la API
     Value: !Sub 'http://${BackendInstance.PublicIp}:8000/api/health'
+
