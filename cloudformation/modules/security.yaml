@@ -32,6 +32,12 @@ Resources:
           ToPort: 22
           CidrIp: !Ref MiIp
           Description: 'SSH para administracion'
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: 'HTTPS'
+
 
 
 

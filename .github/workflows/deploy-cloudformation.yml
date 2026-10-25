@@ -10,10 +10,17 @@ on:
       - feat/cloudformation
   workflow_dispatch:
 
-# Evita colisiones si varios colaboradores hacen push al mismo tiempo
-concurrency:
-  group: production-cfn
-  cancel-in-progress: false # Espera en cola a que termine el despliegue anterior de forma segura
+# =========================================================================
+# COMENTADO TEMPORALMENTE PARA EXPERIMENTAR EL ERROR DE CONCURRENCIA EN AWS:
+# Al comentar 'concurrency', GitHub Actions NO encolara los trabajos.
+# Si dos commits se disparan al mismo tiempo o uno tras otro rapidamente,
+# ambos intentaran ejecutar 'aws cloudformation deploy' en paralelo contra AWS,
+# provocando el error:
+# "Stack [stack-asistencia-modular] is currently in UPDATE_IN_PROGRESS state and cannot be updated."
+# =========================================================================
+# concurrency:
+#   group: production-cfn
+#   cancel-in-progress: false
 
 permissions:
   id-token: write
