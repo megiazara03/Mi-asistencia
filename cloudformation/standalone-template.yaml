@@ -80,6 +80,11 @@ Resources:
           CidrIp: 0.0.0.0/0
           Description: 'HTTP publico'
         - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: 'HTTPS publico'
+        - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: !Ref MiIp
@@ -369,4 +374,5 @@ Outputs:
   BackendPublicIp:
     Description: Direccion IP publica de la VM Backend
     Value: !GetAtt BackendInstance.PublicIp
+
 

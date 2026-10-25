@@ -28,6 +28,11 @@ Resources:
           CidrIp: 0.0.0.0/0
           Description: 'HTTP publico'
         - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: 'HTTPS publico'
+        - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: !Ref MiIp
@@ -82,4 +87,5 @@ Outputs:
     Value: !Ref BackendSecurityGroup
     Export:
       Name: !Sub '${AWS::StackName}-BackendSecurityGroupId'
+
 
