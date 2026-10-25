@@ -10,6 +10,11 @@ on:
       - feat/cloudformation
   workflow_dispatch:
 
+# Evita colisiones si varios colaboradores hacen push al mismo tiempo
+concurrency:
+  group: production-cfn
+  cancel-in-progress: false # Espera en cola a que termine el despliegue anterior de forma segura
+
 permissions:
   id-token: write
   contents: read
