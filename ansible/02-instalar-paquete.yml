@@ -1,0 +1,10 @@
+- name: Instalar un paquete
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Instalar paquete curl
+      ansible.builtin.package:
+        name: curl
+        state: present
+#node njx

@@ -1,0 +1,7 @@
+- name: Probar conectividad con ping
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Ping al host
+      ansible.builtin.ping:

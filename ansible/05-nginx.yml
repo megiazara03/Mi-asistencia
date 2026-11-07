@@ -1,0 +1,15 @@
+- name: Instalar y configurar Nginx
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Instalar nginx
+      ansible.builtin.package:
+        name: nginx
+        state: present
+
+    - name: Iniciar y habilitar el servicio nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true

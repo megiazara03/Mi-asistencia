@@ -1,0 +1,12 @@
+- name: Uso de variables
+  hosts: all
+  become: true
+  vars:
+    saludo: "Hola desde variables"
+    archivo_destino: "/tmp/variables.txt"
+
+  tasks:
+    - name: Escribir archivo usando variables
+      ansible.builtin.copy:
+        dest: "{{ archivo_destino }}"
+        content: "{{ saludo }}\n"

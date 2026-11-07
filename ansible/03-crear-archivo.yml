@@ -1,0 +1,9 @@
+- name: Crear un archivo
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Escribir un saludo
+      ansible.builtin.copy:
+        dest: /tmp/hola.txt
+        content: "Hola desde Ansible\n"
