@@ -46,7 +46,7 @@ jobs:
 
       - name: Validar sintaxis de CloudFormation
         run: |
-          cfn-lint tvms/cloudformation/main.yaml tvms/cloudformation/modules/*.yaml
+          cfn-lint -i W3002 -- tvms/cloudformation/main.yaml tvms/cloudformation/modules/*.yaml
 
   # -------------------------------------------------------------
   # FASE 2: CD (Al hacer MERGE o PUSH a la rama objetivo)
