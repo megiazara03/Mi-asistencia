@@ -17,7 +17,7 @@ on:
 
 jobs:
   # -------------------------------------------------------------
-  # FASE 1: CI (En cada PR) - Validación de sintaxis y calidad
+  # FASE 1: CI (En cada PuR) - Validación de sintaxis y calidad
   # -------------------------------------------------------------
   ci-validate:
     name: Lint & Sintaxis de Ansible y CloudFormation
