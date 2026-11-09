@@ -94,10 +94,10 @@ jobs:
           KEY_EXISTS=$(aws ec2 describe-key-pairs --key-names asistencia-devops-key --region "$REGION" 2>&1 || true)
           if [[ "$KEY_EXISTS" == *"does not exist"* ]] || [[ "$KEY_EXISTS" == *"InvalidKeyPair.NotFound"* ]]; then
             echo "KeyPair no existía en EC2. Importando clave pública desde Parameter Store..."
-            PUB_KEY=$(ssh-keygen -y -f ~/.ssh/asistencia-devops-key.pem)
+            ssh-keygen -y -f ~/.ssh/asistencia-devops-key.pem > ~/.ssh/asistencia-devops-key.pub
             aws ec2 import-key-pair \
               --key-name asistencia-devops-key \
-              --public-key-material "$PUB_KEY" \
+              --public-key-material fileb://~/.ssh/asistencia-devops-key.pub \
               --region "$REGION"
             echo "✔ KeyPair asistencia-devops-key registrado en EC2."
           fi
