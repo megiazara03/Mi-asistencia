@@ -1,0 +1,20 @@
+---
+- name: Demo 01 - Verificación en vivo de Base de Datos
+  hosts: database
+  become: true
+  tasks:
+    - name: Verificar estado del servicio MariaDB
+      ansible.builtin.systemd:
+        name: mariadb
+        state: started
+
+    - name: Consultar registros de usuarios en la base de datos
+      ansible.builtin.command: mysql -u root -e "USE {{ db_name }}; SELECT id, codigo, nombre, email, rol FROM usuario LIMIT 5;"
+      register: db_query
+      changed_when: false
+
+    - name: Mostrar datos obtenidos en vivo
+      ansible.builtin.debug:
+        msg:
+          - "Base de datos {{ db_name }} operativa."
+          - "{{ db_query.stdout_lines }}"

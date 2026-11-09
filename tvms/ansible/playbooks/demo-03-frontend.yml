@@ -1,0 +1,27 @@
+---
+- name: Demo 03 - Verificación y Recarga en vivo de Nginx Frontend
+  hosts: frontend
+  become: true
+  tasks:
+    - name: Validar sintaxis de configuración Nginx
+      ansible.builtin.command: nginx -t
+      register: nginx_test
+      changed_when: false
+
+    - name: Recargar servicio Nginx en caliente (Zero Downtime)
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+
+    - name: Verificar respuesta HTTP 200 de la interfaz Web
+      ansible.builtin.uri:
+        url: "http://localhost"
+        status_code: 200
+      register: web_check
+
+    - name: Mostrar estado del Frontend Web
+      ansible.builtin.debug:
+        msg:
+          - "Configuración de Nginx: OK"
+          - "Servidor Nginx recargado exitosamente."
+          - "Frontend web respondiendo en HTTP {{ web_check.status }} OK."

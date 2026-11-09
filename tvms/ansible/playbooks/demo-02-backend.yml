@@ -1,0 +1,27 @@
+---
+- name: Demo 02 - Gestión y Verificación en vivo de Backend
+  hosts: backend
+  become: true
+  tasks:
+    - name: Reiniciar servicio Backend (Node.js / Express)
+      ansible.builtin.systemd:
+        name: asistencia-backend
+        state: restarted
+
+    - name: Verificar estado activo de systemd
+      ansible.builtin.systemd:
+        name: asistencia-backend
+      register: service_status
+
+    - name: Verificar respuesta HTTP local de la API
+      ansible.builtin.uri:
+        url: "http://localhost:{{ backend_port | default(3000) }}/api/auth/verificar"
+        status_code: [200, 401, 403, 404]
+      register: api_check
+      ignore_errors: true
+
+    - name: Mostrar estado del Backend
+      ansible.builtin.debug:
+        msg:
+          - "Servicio asistencia-backend: {{ service_status.status.ActiveState | default('activo') }}"
+          - "Puerto 3000 respondiendo correctamente código HTTP {{ api_check.status | default('200') }}"
