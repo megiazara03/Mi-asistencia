@@ -119,6 +119,14 @@ jobs:
           VPC_ID=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text)
           SUBNET_ID=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" --query "Subnets[0].SubnetId" --output text)
 
+          # Si el stack quedó en ROLLBACK_COMPLETE de un intento anterior, eliminarlo primero
+          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name miasistencia-modular-stack --region "$REGION" --query "Stacks[0].StackStatus" --output text 2>/dev/null || true)
+          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
+            echo "Eliminando stack en estado ROLLBACK_COMPLETE antes de volver a crearlo..."
+            aws cloudformation delete-stack --stack-name miasistencia-modular-stack --region "$REGION"
+            aws cloudformation wait stack-delete-complete --stack-name miasistencia-modular-stack --region "$REGION"
+          fi
+
           # Empaquetar módulos de CloudFormation hacia S3
           aws cloudformation package \
             --template-file tvms/cloudformation/main.yaml \
