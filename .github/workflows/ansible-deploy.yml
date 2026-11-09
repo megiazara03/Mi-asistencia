@@ -189,4 +189,4 @@ jobs:
       - name: Ejecutar Ansible Playbook (Aprovisionar Servidores)
         run: |
           cd tvms/ansible
-          ANSIBLE_CONFIG=./ansible.cfg ansible-playbook site.yml
+          ANSIBLE_CONFIG=./ansible.cfg ansible-playbook -i inventario.ini site.yml
