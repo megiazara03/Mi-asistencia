@@ -77,19 +77,30 @@ jobs:
           sudo apt update
           sudo apt install -y ansible
 
-      - name: Descargar Llave SSH desde AWS SSM Parameter Store
+      - name: Descargar Llave SSH y asegurar KeyPair en AWS EC2
         run: |
           mkdir -p ~/.ssh
+          REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
           aws ssm get-parameter \
-            --name "asistencia-devops-key" \
-            --with-decryption \
-            --region "${{ secrets.AWS_REGION || 'us-east-1' }}" \
-            --query "Parameter.Value" \
+            --name "asistencia-devops-key" \\
+            --with-decryption \\
+            --region "$REGION" \\
+            --query "Parameter.Value" \\
             --output text > ~/.ssh/asistencia-devops-key.pem
 
           sed -i 's/\r$//' ~/.ssh/asistencia-devops-key.pem
           chmod 600 ~/.ssh/asistencia-devops-key.pem
-          echo "✔ Llave SSH descargada exitosamente desde AWS SSM Parameter Store."
+
+          KEY_EXISTS=$(aws ec2 describe-key-pairs --key-names asistencia-devops-key --region "$REGION" 2>&1 || true)
+          if [[ "$KEY_EXISTS" == *"does not exist"* ]] || [[ "$KEY_EXISTS" == *"InvalidKeyPair.NotFound"* ]]; then
+            echo "KeyPair no existía en EC2. Importando clave pública desde Parameter Store..."
+            PUB_KEY=$(ssh-keygen -y -f ~/.ssh/asistencia-devops-key.pem)
+            aws ec2 import-key-pair \
+              --key-name asistencia-devops-key \\
+              --public-key-material "$PUB_KEY" \\
+              --region "$REGION"
+            echo "✔ KeyPair asistencia-devops-key registrado en EC2."
+          fi
       - name: Asegurar Bucket S3 y Desplegar CloudFormation Stack
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)

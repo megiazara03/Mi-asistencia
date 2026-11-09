@@ -75,13 +75,8 @@ if ($LASTEXITCODE -eq 0 -and $stackStatus -notlike "*does not exist*") {
     Write-Host "    El stack '$StackName' ya no existe en AWS." -ForegroundColor Yellow
 }
 
-# 5. Limpieza de KeyPair en AWS y archivos locales generados
+# 5. Limpieza de archivos locales generados
 Write-Host "==> [4/4] Limpiando archivos locales generados..." -ForegroundColor Cyan
-
-# Eliminar KeyPair generado en AWS (asistencia-devops-key)
-try {
-    & aws @sslFlag ec2 delete-key-pair --key-name "asistencia-devops-key" --region $Region 2>$null
-} catch {}
 
 # Eliminar archivo .pem generado
 if (Test-Path $defaultPem) {
