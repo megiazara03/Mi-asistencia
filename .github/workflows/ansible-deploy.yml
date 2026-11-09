@@ -17,7 +17,7 @@ on:
 
 jobs:
   # -------------------------------------------------------------
-  # FASE 1: CI (En cada PuR) - Validación de sintaxis y calidad
+  # FASE 1: CI (En cada PR) - Validación de sintaxis y calidad
   # -------------------------------------------------------------
   ci-validate:
     name: Lint & Sintaxis de Ansible y CloudFormation
@@ -49,11 +49,11 @@ jobs:
           cfn-lint -i W3002 -- tvms/cloudformation/main.yaml tvms/cloudformation/modules/*.yaml
 
   # -------------------------------------------------------------
-  # FASE 2: CD (Al hacer MERGE o PUSH a la rama objetivo)
-  # Despliegue automático de configuración sobre los servidores EC2
+  # FASE 2: CD (Al hacer MERGE a la rama objetivo)
+  # Despliegue de CloudFormation y configuración con Ansible
   # -------------------------------------------------------------
   cd-deploy:
-    name: Desplegar cambios con Ansible en AWS
+    name: Desplegar Infraestructura y Configurar con Ansible
     needs: ci-validate
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -73,22 +73,62 @@ jobs:
           sudo apt update
           sudo apt install -y ansible
 
-      - name: Configurar llave privada SSH desde GitHub Secrets
+      - name: Inyectar o crear KeyPair en AWS y Llave SSH local
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/asistencia-devops-key.pem
+          if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/asistencia-devops-key.pem
+          else
+            # Si no hay secreto cargado, asegurar KeyPair en AWS y guardarlo
+            aws ec2 delete-key-pair --key-name asistencia-devops-key --region "${{ secrets.AWS_REGION || 'us-east-1' }}" 2>/dev/null || true
+            RAW_KEY=$(aws ec2 create-key-pair --key-name asistencia-devops-key --query "KeyMaterial" --output text --region "${{ secrets.AWS_REGION || 'us-east-1' }}")
+            echo "$RAW_KEY" > ~/.ssh/asistencia-devops-key.pem
+          fi
           chmod 600 ~/.ssh/asistencia-devops-key.pem
 
-      - name: Descubrir IPs de CloudFormation y armar inventario dinámico
+      - name: Asegurar Bucket S3 y Desplegar CloudFormation Stack
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+          REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+          BUCKET="asistencia-cfn-plantillas-${ACCOUNT_ID}-${REGION}"
+          
+          # Crear bucket de plantillas si no existe
+          aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null || {
+            if [ "$REGION" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "$BUCKET" --region "$REGION"
+            else
+              aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" --create-bucket-configuration LocationConstraint="$REGION"
+            fi
+          }
+
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text)
+          SUBNET_ID=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" --query "Subnets[0].SubnetId" --output text)
+
+          # Empaquetar módulos de CloudFormation hacia S3
+          aws cloudformation package \
+            --template-file tvms/cloudformation/main.yaml \
+            --s3-bucket "$BUCKET" \
+            --s3-prefix "cloudformation" \
+            --output-template-file tvms/cloudformation/packaged.yaml
+
+          # Desplegar stack con las 3 instancias EC2
+          aws cloudformation deploy \
+            --template-file tvms/cloudformation/packaged.yaml \
+            --stack-name miasistencia-modular-stack \
+            --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+                VpcId=$VPC_ID \
+                SubnetId=$SUBNET_ID \
+                KeyName=asistencia-devops-key
+
+      - name: Generar Inventario Ansible con IPs obtenidas
         run: |
           cd tvms/ansible
-          
-          # Extraer IPs desde CloudFormation
           FRONTEND_IP=$(aws cloudformation describe-stacks --stack-name miasistencia-modular-stack --query "Stacks[0].Outputs[?OutputKey=='FrontendIP'].OutputValue" --output text)
           BACKEND_IP=$(aws cloudformation describe-stacks --stack-name miasistencia-modular-stack --query "Stacks[0].Outputs[?OutputKey=='BackendIP'].OutputValue" --output text)
           DATABASE_IP=$(aws cloudformation describe-stacks --stack-name miasistencia-modular-stack --query "Stacks[0].Outputs[?OutputKey=='DatabaseIP'].OutputValue" --output text)
-          
-          # Generar inventario.ini
+
           cat <<EOF > inventario.ini
           [frontend]
           $FRONTEND_IP
@@ -105,22 +145,13 @@ jobs:
           ansible_ssh_common_args='-o StrictHostKeyChecking=no'
           EOF
 
-      - name: Configurar variables desde plantilla .example
-        run: |
-          cd tvms/ansible
+          # Preparar group_vars desde plantilla
           if [ ! -f group_vars/all.yml ]; then
             cp group_vars/all.yml.example group_vars/all.yml
-            # Inyectar contraseñas reales si se configuraron en GitHub Secrets (o mantener defaults)
-            if [ -n "${{ secrets.DB_PASSWORD }}" ]; then
-              sed -i "s/CHANGE_ME_DB_PASSWORD/${{ secrets.DB_PASSWORD }}/" group_vars/all.yml
-            fi
-            if [ -n "${{ secrets.JWT_SECRET }}" ]; then
-              sed -i "s/CHANGE_ME_JWT_SECRET_KEY/${{ secrets.JWT_SECRET }}/" group_vars/all.yml
-            fi
-            if [ -n "${{ secrets.ADMIN_PASSWORD }}" ]; then
-              sed -i "s/CHANGE_ME_ADMIN_PASSWORD/${{ secrets.ADMIN_PASSWORD }}/" group_vars/all.yml
-            fi
           fi
+
+      - name: Pausa de estabilización SSH (20 segundos)
+        run: sleep 20
 
       - name: Ejecutar Ansible Playbook (Aprovisionar Servidores)
         run: |
