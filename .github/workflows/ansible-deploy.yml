@@ -82,10 +82,10 @@ jobs:
           mkdir -p ~/.ssh
           REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
           aws ssm get-parameter \
-            --name "asistencia-devops-key" \\
-            --with-decryption \\
-            --region "$REGION" \\
-            --query "Parameter.Value" \\
+            --name "asistencia-devops-key" \
+            --with-decryption \
+            --region "$REGION" \
+            --query "Parameter.Value" \
             --output text > ~/.ssh/asistencia-devops-key.pem
 
           sed -i 's/\r$//' ~/.ssh/asistencia-devops-key.pem
@@ -96,8 +96,8 @@ jobs:
             echo "KeyPair no existía en EC2. Importando clave pública desde Parameter Store..."
             PUB_KEY=$(ssh-keygen -y -f ~/.ssh/asistencia-devops-key.pem)
             aws ec2 import-key-pair \
-              --key-name asistencia-devops-key \\
-              --public-key-material "$PUB_KEY" \\
+              --key-name asistencia-devops-key \
+              --public-key-material "$PUB_KEY" \
               --region "$REGION"
             echo "✔ KeyPair asistencia-devops-key registrado en EC2."
           fi
