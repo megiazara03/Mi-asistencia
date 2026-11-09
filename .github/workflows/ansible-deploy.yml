@@ -181,21 +181,7 @@ jobs:
           BACKEND_IP="${{ steps.get_ips.outputs.backend_ip }}"
           DATABASE_IP="${{ steps.get_ips.outputs.database_ip }}"
 
-          cat <<EOF > inventario.ini
-          [frontend]
-          $FRONTEND_IP
-
-          [backend]
-          $BACKEND_IP
-
-          [database]
-          $DATABASE_IP
-
-          [all:vars]
-          ansible_user=ubuntu
-          ansible_ssh_private_key_file=~/.ssh/asistencia-devops-key.pem
-          ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-          EOF
+          printf '[frontend]\n%s\n\n[backend]\n%s\n\n[database]\n%s\n\n[all:vars]\nansible_user=ubuntu\nansible_ssh_private_key_file=~/.ssh/asistencia-devops-key.pem\nansible_ssh_common_args='\''-o StrictHostKeyChecking=no'\''\n' "$FRONTEND_IP" "$BACKEND_IP" "$DATABASE_IP" > inventario.ini
 
           # Preparar group_vars desde plantilla
           if [ ! -f group_vars/all.yml ]; then
