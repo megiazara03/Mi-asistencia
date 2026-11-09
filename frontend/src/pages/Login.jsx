@@ -57,7 +57,7 @@ export default function Login() {
         <Logo />
         <div>
           <h2>Tu asistencia, registrada en un clic.</h2>
-          <h2>Modulo 2iac.</h2>
+          <h2>Modulo 2iac dcid.</h2>
           
           <p>Marca tu presencia el día de clase y revisa tu historial del módulo en cualquier momento.</p>
           <div className="login-datos">
