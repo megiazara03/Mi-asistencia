@@ -57,6 +57,10 @@ jobs:
     needs: ci-validate
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    outputs:
+      frontend_ip: ${{ steps.get_ips.outputs.frontend_ip }}
+      backend_ip: ${{ steps.get_ips.outputs.backend_ip }}
+      database_ip: ${{ steps.get_ips.outputs.database_ip }}
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
@@ -122,12 +126,41 @@ jobs:
                 SubnetId=$SUBNET_ID \
                 KeyName=asistencia-devops-key
 
-      - name: Generar Inventario Ansible con IPs obtenidas
+      - name: Consultar Outputs de IPs en tiempo real
+        id: get_ips
         run: |
-          cd tvms/ansible
           FRONTEND_IP=$(aws cloudformation describe-stacks --stack-name miasistencia-modular-stack --query "Stacks[0].Outputs[?OutputKey=='FrontendIP'].OutputValue" --output text)
           BACKEND_IP=$(aws cloudformation describe-stacks --stack-name miasistencia-modular-stack --query "Stacks[0].Outputs[?OutputKey=='BackendIP'].OutputValue" --output text)
           DATABASE_IP=$(aws cloudformation describe-stacks --stack-name miasistencia-modular-stack --query "Stacks[0].Outputs[?OutputKey=='DatabaseIP'].OutputValue" --output text)
+
+          # Exportar como outputs del step y job en GitHub Actions
+          echo "frontend_ip=$FRONTEND_IP" >> $GITHUB_OUTPUT
+          echo "backend_ip=$BACKEND_IP" >> $GITHUB_OUTPUT
+          echo "database_ip=$DATABASE_IP" >> $GITHUB_OUTPUT
+
+          # Imprimir claramente en los logs de GitHub Actions
+          echo "=========================================================="
+          echo " IPs PÚBLICAS DESPLEGADAS EN AWS"
+          echo "=========================================================="
+          echo " Frontend IP : $FRONTEND_IP"
+          echo " Backend IP  : $BACKEND_IP"
+          echo " Database IP : $DATABASE_IP"
+          echo "=========================================================="
+
+          # Publicar resumen en GitHub Step Summary (UI de GitHub Actions)
+          echo "### 🚀 Infraestructura Desplegada en AWS" >> $GITHUB_STEP_SUMMARY
+          echo "| Recurso | IP Pública | URL de Acceso |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Frontend** | \`$FRONTEND_IP\` | [http://$FRONTEND_IP](http://$FRONTEND_IP) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Backend API** | \`$BACKEND_IP\` | [http://$BACKEND_IP:8000](http://$BACKEND_IP:8000) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Database (MySQL)** | \`$DATABASE_IP\` | Puerto 3306 |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Generar Inventario Ansible con IPs obtenidas
+        run: |
+          cd tvms/ansible
+          FRONTEND_IP="${{ steps.get_ips.outputs.frontend_ip }}"
+          BACKEND_IP="${{ steps.get_ips.outputs.backend_ip }}"
+          DATABASE_IP="${{ steps.get_ips.outputs.database_ip }}"
 
           cat <<EOF > inventario.ini
           [frontend]
