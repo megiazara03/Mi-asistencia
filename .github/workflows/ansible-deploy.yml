@@ -77,19 +77,17 @@ jobs:
           sudo apt update
           sudo apt install -y ansible
 
-      - name: Inyectar o crear KeyPair en AWS y Llave SSH local
+      - name: Inyectar Llave SSH desde GitHub Secrets
         run: |
           mkdir -p ~/.ssh
           if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/asistencia-devops-key.pem
+            printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/asistencia-devops-key.pem
+            sed -i 's/\r$//' ~/.ssh/asistencia-devops-key.pem
+            chmod 600 ~/.ssh/asistencia-devops-key.pem
           else
-            # Si no hay secreto cargado, asegurar KeyPair en AWS y guardarlo
-            aws ec2 delete-key-pair --key-name asistencia-devops-key --region "${{ secrets.AWS_REGION || 'us-east-1' }}" 2>/dev/null || true
-            RAW_KEY=$(aws ec2 create-key-pair --key-name asistencia-devops-key --query "KeyMaterial" --output text --region "${{ secrets.AWS_REGION || 'us-east-1' }}")
-            echo "$RAW_KEY" > ~/.ssh/asistencia-devops-key.pem
+            echo "::error::Falta configurar el secreto SSH_PRIVATE_KEY en Settings -> Secrets -> Actions."
+            exit 1
           fi
-          chmod 600 ~/.ssh/asistencia-devops-key.pem
-
       - name: Asegurar Bucket S3 y Desplegar CloudFormation Stack
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
