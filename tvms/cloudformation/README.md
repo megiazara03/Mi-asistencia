@@ -207,4 +207,4 @@ aws cloudformation delete-stack --stack-name miasistencia-modular-stack
 ```powershell
 aws s3 rb s3://asistencia-cfn-plantillas-<tu-account-id>-us-east-1 --force
 ```
-<!-- Prueba de Pull Request desde Git  -->
+<!-- Prueba de Pull Request desde Gi  -->
