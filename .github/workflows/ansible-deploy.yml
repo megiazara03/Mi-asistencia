@@ -77,17 +77,19 @@ jobs:
           sudo apt update
           sudo apt install -y ansible
 
-      - name: Inyectar Llave SSH desde GitHub Secrets
+      - name: Descargar Llave SSH desde AWS SSM Parameter Store
         run: |
           mkdir -p ~/.ssh
-          if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-            printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/asistencia-devops-key.pem
-            sed -i 's/\r$//' ~/.ssh/asistencia-devops-key.pem
-            chmod 600 ~/.ssh/asistencia-devops-key.pem
-          else
-            echo "::error::Falta configurar el secreto SSH_PRIVATE_KEY en Settings -> Secrets -> Actions."
-            exit 1
-          fi
+          aws ssm get-parameter \
+            --name "asistencia-devops-key" \
+            --with-decryption \
+            --region "${{ secrets.AWS_REGION || 'us-east-1' }}" \
+            --query "Parameter.Value" \
+            --output text > ~/.ssh/asistencia-devops-key.pem
+
+          sed -i 's/\r$//' ~/.ssh/asistencia-devops-key.pem
+          chmod 600 ~/.ssh/asistencia-devops-key.pem
+          echo "✔ Llave SSH descargada exitosamente desde AWS SSM Parameter Store."
       - name: Asegurar Bucket S3 y Desplegar CloudFormation Stack
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
